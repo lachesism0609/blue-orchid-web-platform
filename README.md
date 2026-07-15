@@ -1,1 +1,176 @@
-# blue-orchid-web-platform
+# Blue Orchid Fashion Store
+
+Blue Orchid is a bilingual fashion e-commerce application built with React, Vite, Node.js, and Express. It covers the core shopping journey, including product discovery, favourites, cart management, checkout confirmation, customer accounts, and order history.
+
+The project is suitable as an online fashion store prototype, a full-stack learning project, or a foundation for further commercial development.
+
+> This is currently a demonstration project. User data is stored in a local JSON file, currency conversion uses a fixed sample rate, and checkout does not process real payments.
+
+## Features
+
+### Storefront and Products
+
+- Responsive homepage with brand navigation, an automatic hero carousel, category shortcuts, popular products, and service highlights
+- Dedicated pages for New Arrivals, Women, Men, Bags, Shoes, Accessories, and Sale
+- Chinese and English interface switching
+- CNY and EUR currency switching using the sample rate `1 EUR = CNY 7.80`
+- Product colour selectors with corresponding image previews
+- Consistent sale prices, original prices, and discount badges across all relevant pages
+- Product favourites with success notifications and a dedicated favourites page
+- Enhanced About page with brand information, values, imagery, and customer service details
+
+### Cart and Orders
+
+- Add-to-cart controls on every product card
+- Editable item quantities, item removal, and price totals in the cart
+- Complete simulated checkout flow:
+  1. Continue from the cart to the order review page
+  2. Review products, quantities, unit prices, and the order total
+  3. Select an existing delivery address
+  4. Confirm the purchase and create an order
+  5. View a purchase success page
+  6. Automatically continue to Order History in the customer account
+- Order history and order details, including products, quantities, prices, order time, status, and delivery address
+- Cart and favourite data persisted in browser `localStorage`
+
+### Customer Accounts
+
+- Customer registration, login, and session validation
+- Personal information viewing and editing
+- Delivery address creation, viewing, and deletion
+- Page restoration after refreshing account, cart, favourites, and category pages
+- Passwords stored using Node.js `scrypt` with a unique salt
+- HMAC-SHA256 signed authentication tokens with a default seven-day lifetime
+
+## Technology Stack
+
+| Layer | Technology |
+| --- | --- |
+| Frontend | React 18, Vite 6, CSS |
+| Backend | Node.js, Express 4 |
+| Authentication | `crypto.scryptSync`, HMAC-SHA256 tokens |
+| Data storage | Local JSON file and browser `localStorage` |
+| Development proxy | Vite `/api` proxy to Express |
+
+## Getting Started
+
+### Requirements
+
+- Node.js 18 or later
+- npm
+
+### Install Dependencies
+
+```bash
+npm install
+```
+
+If the Windows PowerShell execution policy prevents `npm.ps1` from running, use:
+
+```powershell
+npm.cmd install
+```
+
+### Configure the Authentication Secret
+
+The repository includes `.env.example` as a variable reference. The server does not currently load `.env` automatically, so set `AUTH_SECRET` in the terminal or deployment environment before starting the application.
+
+Windows PowerShell:
+
+```powershell
+$env:AUTH_SECRET="replace-with-a-long-random-secret"
+npm run dev
+```
+
+macOS or Linux:
+
+```bash
+AUTH_SECRET="replace-with-a-long-random-secret" npm run dev
+```
+
+A built-in fallback value is available for local development, but production environments must use a unique, securely generated secret. Changing the secret invalidates previously issued authentication tokens.
+
+### Start the Development Environment
+
+```bash
+npm run dev
+```
+
+The application is normally available at:
+
+- Frontend: `http://localhost:5173`
+- Backend API: `http://localhost:3010`
+
+The `npm run dev` command starts both the Vite frontend and Express backend. Registration, login, address management, and order features require the backend service to be running.
+
+## Available Scripts
+
+| Command | Description |
+| --- | --- |
+| `npm run dev` | Start the frontend and backend development services |
+| `npm run dev:client` | Start only the Vite frontend |
+| `npm run server` | Start only the Express backend on port 3010 by default |
+| `npm run build` | Create a production build in `dist/` |
+| `npm run preview` | Preview the production build locally |
+
+## API Overview
+
+During frontend development, Vite proxies `/api` requests to `http://localhost:3010`.
+
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| `GET` | `/api/products` | Retrieve the product catalogue |
+| `POST` | `/api/auth/register` | Register a customer |
+| `POST` | `/api/auth/login` | Log in a customer |
+| `GET` | `/api/auth/me` | Retrieve the authenticated customer |
+| `PUT` | `/api/account/profile` | Update personal information |
+| `GET` | `/api/account/addresses` | Retrieve delivery addresses |
+| `POST` | `/api/account/addresses` | Create a delivery address |
+| `DELETE` | `/api/account/addresses/:addressId` | Delete a delivery address |
+| `GET` | `/api/account/orders` | Retrieve order history |
+| `POST` | `/api/account/orders` | Create an order |
+
+Protected account endpoints require an authentication token in the request header:
+
+```http
+Authorization: Bearer <token>
+```
+
+## Project Structure
+
+```text
+blue-orchid-web-platform/
+├─ src/
+│  ├─ main.jsx          # React views, navigation state, and store interactions
+│  └─ styles.css        # Application-wide responsive styles
+├─ server/
+│  ├─ index.js          # Express API, authentication, and data handling
+│  ├─ dev.js            # Combined frontend and backend development launcher
+│  └─ data/             # Local customer, address, and order data (not committed)
+├─ .env.example         # Authentication secret variable reference
+├─ vite.config.js       # Vite configuration and API proxy
+└─ package.json         # Dependencies and project scripts
+```
+
+## Data and Navigation State
+
+- Customer, address, and order data is stored in `server/data/users.json`. The data directory is excluded from Git.
+- Favourites and cart contents are stored in the browser. Clearing the site's browser data removes them.
+- The current page is represented by a URL hash such as `#cart`, `#account`, or `#about`, allowing the application to restore the page after a refresh.
+- Product images are loaded from remote image services and may be unavailable when offline or when an image provider cannot be reached.
+
+## Current Limitations
+
+- No real payment gateway is connected; confirming a purchase only creates a simulated order.
+- The local JSON storage is not a production-grade database and is not designed for a live multi-user service.
+- There is no administration dashboard, inventory management, delivery tracking, refund workflow, or coupon system.
+- CNY and EUR values use a fixed demonstration rate rather than live exchange-rate data.
+- Customer service email addresses, telephone numbers, and opening hours shown in the application are sample information.
+
+## Suggested Next Steps
+
+- Introduce PostgreSQL, MySQL, or MongoDB with a managed schema and migration process
+- Use HTTPS, secure cookies, request rate limiting, and stronger session revocation controls
+- Add product details, search, filtering, pagination, and inventory validation
+- Integrate payment, fulfilment, email notifications, and order status workflows
+- Add automated frontend and backend tests, error monitoring, and a deployment pipeline
