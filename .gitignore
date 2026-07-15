@@ -3,3 +3,5 @@ dist/
 .npm-cache/
 .env
 server/data/
+.dev.vars
+.wrangler/

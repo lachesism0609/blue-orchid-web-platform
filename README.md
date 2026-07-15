@@ -159,10 +159,31 @@ blue-orchid-web-platform/
 - The current page is represented by a URL hash such as `#cart`, `#account`, or `#about`, allowing the application to restore the page after a refresh.
 - Product images are loaded from remote image services and may be unavailable when offline or when an image provider cannot be reached.
 
+## Cloudflare Deployment
+
+The repository includes a Cloudflare Pages Functions backend and a D1 schema for a full-stack deployment:
+
+- `functions/api/[[path]].js` provides the product, authentication, profile, address, and order APIs.
+- `migrations/0001_initial.sql` creates the D1 tables and indexes.
+- `public/_routes.json` limits Pages Functions invocations to `/api/*`, leaving static assets on the Pages CDN.
+
+Create a Cloudflare Pages project connected to this repository with the following build settings:
+
+| Setting | Value |
+| --- | --- |
+| Framework preset | Vite |
+| Build command | `npm run build` |
+| Build output directory | `dist` |
+| Root directory | `/` |
+
+Create a D1 database, execute `migrations/0001_initial.sql`, and bind it to the Pages project using the variable name `DB`. Also create an encrypted Pages secret named `AUTH_SECRET` with a long random value. Redeploy the project after adding or changing bindings.
+
+The original Express server remains available for local development through `npm run dev`. Local Express data and production Cloudflare D1 data are independent and are not synchronized automatically.
+
 ## Current Limitations
 
 - No real payment gateway is connected; confirming a purchase only creates a simulated order.
-- The local JSON storage is not a production-grade database and is not designed for a live multi-user service.
+- The local Express server still uses JSON storage and is not designed for a live multi-user service; Cloudflare deployments use D1 instead.
 - There is no administration dashboard, inventory management, delivery tracking, refund workflow, or coupon system.
 - CNY and EUR values use a fixed demonstration rate rather than live exchange-rate data.
 - Customer service email addresses, telephone numbers, and opening hours shown in the application are sample information.
