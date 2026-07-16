@@ -1,4 +1,5 @@
-import { index, integer, jsonb, pgTable, serial, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
+import { check, index, integer, jsonb, pgTable, serial, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
 
 export const users = pgTable('users', {
   id: text('id').primaryKey(),
@@ -30,6 +31,51 @@ export const rateLimits = pgTable('rate_limits', {
   count: integer('count').notNull().default(0),
   resetAt: timestamp('reset_at', { withTimezone: true, mode: 'string' }).notNull()
 }, table => [index('rate_limits_reset_at_idx').on(table.resetAt)])
+
+export const products = pgTable('products', {
+  id: integer('id').primaryKey(),
+  category: text('category').notNull(),
+  nameZh: text('name_zh').notNull(),
+  nameEn: text('name_en').notNull(),
+  descriptionZh: text('description_zh').notNull(),
+  descriptionEn: text('description_en').notNull(),
+  materialsZh: text('materials_zh').notNull(),
+  materialsEn: text('materials_en').notNull(),
+  price: integer('price').notNull(),
+  salePercent: integer('sale_percent'),
+  imageUrl: text('image_url').notNull(),
+  active: integer('active').notNull().default(1),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
+}, table => [index('products_category_active_idx').on(table.category, table.active), index('products_sale_percent_idx').on(table.salePercent), check('products_price_check', sql`${table.price} >= 0`), check('products_sale_percent_check', sql`${table.salePercent} IS NULL OR (${table.salePercent} BETWEEN 1 AND 99)`), check('products_active_check', sql`${table.active} IN (0, 1)`)])
+
+export const productVariants = pgTable('product_variants', {
+  id: integer('id').primaryKey(),
+  productId: integer('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
+  code: text('code').notNull(),
+  nameZh: text('name_zh').notNull(),
+  nameEn: text('name_en').notNull(),
+  colorHex: text('color_hex').notNull(),
+  imageUrl: text('image_url').notNull(),
+  position: integer('position').notNull().default(0)
+}, table => [uniqueIndex('product_variants_code_idx').on(table.code), uniqueIndex('product_variants_product_position_idx').on(table.productId, table.position)])
+
+export const productSizes = pgTable('product_sizes', {
+  id: integer('id').primaryKey(),
+  productId: integer('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
+  label: text('label').notNull(),
+  position: integer('position').notNull().default(0)
+}, table => [uniqueIndex('product_sizes_product_label_idx').on(table.productId, table.label), uniqueIndex('product_sizes_product_position_idx').on(table.productId, table.position)])
+
+export const productSkus = pgTable('product_skus', {
+  id: integer('id').primaryKey(),
+  productId: integer('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
+  variantId: integer('variant_id').notNull().references(() => productVariants.id, { onDelete: 'cascade' }),
+  sizeId: integer('size_id').notNull().references(() => productSizes.id, { onDelete: 'cascade' }),
+  sku: text('sku').notNull(),
+  stock: integer('stock').notNull().default(0),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
+}, table => [uniqueIndex('product_skus_sku_idx').on(table.sku), uniqueIndex('product_skus_variant_size_idx').on(table.variantId, table.sizeId), index('product_skus_product_stock_idx').on(table.productId, table.stock), check('product_skus_stock_check', sql`${table.stock} >= 0`)])
 
 export const productInventory = pgTable('product_inventory', {
   productId: integer('product_id').primaryKey(),
@@ -76,5 +122,7 @@ export const orderItems = pgTable('order_items', {
   name: text('name').notNull(),
   quantity: integer('quantity').notNull(),
   size: text('size').notNull().default('One size'),
+  variantId: integer('variant_id').references(() => productVariants.id, { onDelete: 'set null' }),
+  variantName: text('variant_name').notNull().default('Default'),
   unitPrice: integer('unit_price').notNull()
 }, table => [index('order_items_order_id_idx').on(table.orderId)])

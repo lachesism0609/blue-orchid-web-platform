@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { onRequest } from "../functions/api/[[path]].js";
+import {
+  catalogueQueries,
+  productCatalogue,
+  selectedSku,
+} from "../functions/_lib/catalog.js";
+import { catalogSeed } from "../db/catalog-seed.js";
 
 class AuthDatabase {
   constructor() {
@@ -8,10 +14,51 @@ class AuthDatabase {
     this.sessions = [];
     this.rateLimits = new Map();
     this.errors = [];
-    this.inventory = Array.from({ length: 30 }, (_, index) => ({
-      product_id: index + 1,
-      stock: index === 4 ? 0 : 10,
+    this.productRows = catalogSeed.map((product) => ({
+      id: product.id,
+      category: product.category,
+      name_zh: product.nameZh,
+      name_en: product.nameEn,
+      description_zh: product.descriptionZh,
+      description_en: product.descriptionEn,
+      materials_zh: product.materialsZh,
+      materials_en: product.materialsEn,
+      price: product.price,
+      sale_percent: product.salePercent,
+      image_url: product.imageUrl,
     }));
+    this.variantRows = catalogSeed.flatMap((product) =>
+      product.variants.map((variant) => ({
+        id: variant.id,
+        product_id: product.id,
+        code: variant.code,
+        name_zh: variant.nameZh,
+        name_en: variant.nameEn,
+        color_hex: variant.colorHex,
+        image_url: variant.imageUrl,
+        position: variant.position,
+      })),
+    );
+    this.sizeRows = catalogSeed.flatMap((product) =>
+      product.sizeOptions.map((size) => ({
+        id: size.id,
+        product_id: product.id,
+        label: size.label,
+        position: size.position,
+      })),
+    );
+    this.skuRows = catalogSeed.flatMap((product) =>
+      product.variants.flatMap((variant) =>
+        product.sizeOptions.map((size) => ({
+          id: product.id * 100 + variant.position * 10 + size.position + 1,
+          product_id: product.id,
+          variant_id: variant.id,
+          size_id: size.id,
+          sku: `${variant.code}-S${String(size.position + 1).padStart(2, "0")}`,
+          stock: product.id === 5 ? 0 : 2,
+        })),
+      ),
+    );
   }
 
   prepare(sql) {
@@ -20,8 +67,14 @@ class AuthDatabase {
       bind(...values) {
         return {
           async all() {
-            if (sql === "SELECT product_id, stock FROM product_inventory")
-              return { results: database.inventory };
+            if (sql === catalogueQueries.productQuery)
+              return { results: database.productRows };
+            if (sql === catalogueQueries.variantQuery)
+              return { results: database.variantRows };
+            if (sql === catalogueQueries.sizeQuery)
+              return { results: database.sizeRows };
+            if (sql === catalogueQueries.skuQuery)
+              return { results: database.skuRows };
             throw new Error(`Unexpected all query: ${sql}`);
           },
           async first() {
@@ -191,11 +244,36 @@ test("returns the complete product catalogue", async () => {
   assert.equal((await response.json()).length, 30);
 });
 
+test("resolves stock for an exact product variant and size", async () => {
+  const catalogue = await productCatalogue(new AuthDatabase());
+  const product = catalogue[0];
+  const selection = selectedSku(
+    product,
+    product.variants[0].id,
+    product.sizes[0],
+  );
+  assert.equal(selection.variant.code, "BO-001-C01");
+  assert.equal(selection.sku.stock, 2);
+  assert.equal(
+    selectedSku(product, 999999, product.sizes[0]).error,
+    "INVALID_VARIANT",
+  );
+  assert.equal(
+    selectedSku(product, product.variants[0].id, "XXL").error,
+    "INVALID_SIZE",
+  );
+});
+
 test("supports product details, filtering, and pagination", async () => {
   const databaseEnv = env();
   const detail = await onRequest(context(databaseEnv, "products/4"));
   assert.equal(detail.status, 200);
-  assert.equal((await detail.json()).id, 4);
+  const product = await detail.json();
+  assert.equal(product.id, 4);
+  assert.equal(product.nameEn, "Oversized blazer");
+  assert.equal(product.variants.length, 2);
+  assert.deepEqual(product.sizes, ["XS", "S", "M", "L"]);
+  assert.ok(product.skus.every((sku) => sku.variantId && sku.size));
 
   const filtered = await onRequest(
     context(databaseEnv, "products?category=women&inStock=true&page=1&limit=2"),
@@ -209,6 +287,11 @@ test("supports product details, filtering, and pagination", async () => {
       (product) => product.category === "women" && product.inStock,
     ),
   );
+
+  const englishSearch = await onRequest(
+    context(databaseEnv, "products?q=blazer"),
+  );
+  assert.equal((await englishSearch.json()).items[0].id, 4);
 });
 
 test("returns the latest EUR/CNY reference rate", async () => {

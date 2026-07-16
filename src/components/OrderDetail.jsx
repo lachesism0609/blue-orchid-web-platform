@@ -58,6 +58,8 @@ export default function OrderDetail({
                 </strong>
                 <span>
                   {lang === "zh" ? "数量" : "Qty"} × {item.quantity} ·{" "}
+                  {item.variantName || (lang === "zh" ? "默认款式" : "Default")}
+                  {" · "}
                   {item.size || "One size"}
                 </span>
               </div>

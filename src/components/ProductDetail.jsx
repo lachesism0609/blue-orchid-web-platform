@@ -13,6 +13,11 @@ export default function ProductDetail({
   onAction,
 }) {
   if (!product) return null;
+  const variant = product.variants?.[selectedColor];
+  const sku = product.skus?.find(
+    (entry) => entry.variantId === variant?.id && entry.size === selectedSize,
+  );
+  const available = sku?.stock ?? variant?.stock ?? product.stock;
   return (
     <div className="product-detail-backdrop" onClick={onClose}>
       <article
@@ -40,13 +45,17 @@ export default function ProductDetail({
           )}
           <p>
             {lang === "zh"
-              ? "以舒适、轻盈与日常实穿为核心设计的经典单品。"
-              : product.description}
+              ? product.descriptionZh || product.description
+              : product.descriptionEn || product.description}
           </p>
           <dl>
             <div>
               <dt>{lang === "zh" ? "材质" : "Materials"}</dt>
-              <dd>{product.materials}</dd>
+              <dd>
+                {lang === "zh"
+                  ? product.materialsZh || product.materials
+                  : product.materialsEn || product.materials}
+              </dd>
             </div>
             <div>
               <dt>{lang === "zh" ? "尺码" : "Sizes"}</dt>
@@ -66,8 +75,8 @@ export default function ProductDetail({
             <div>
               <dt>{lang === "zh" ? "库存" : "Availability"}</dt>
               <dd>
-                {product.inStock
-                  ? `${product.stock} ${lang === "zh" ? "件有货" : "in stock"}`
+                {available > 0
+                  ? `${available} ${lang === "zh" ? "件有货" : "in stock"}`
                   : lang === "zh"
                     ? "暂时缺货"
                     : "Out of stock"}
@@ -81,21 +90,25 @@ export default function ProductDetail({
                 className={selectedColor === index ? "selected" : ""}
                 style={{ background: color }}
                 onClick={() => onColor(index)}
-                aria-label={`${lang === "zh" ? "款式" : "Colour"} ${index + 1}`}
+                aria-label={
+                  product.variants?.[index]?.[
+                    lang === "zh" ? "nameZh" : "nameEn"
+                  ] || `${lang === "zh" ? "款式" : "Colour"} ${index + 1}`
+                }
                 key={color}
               />
             ))}
           </div>
           <button
             className="detail-add"
-            disabled={!product.inStock}
+            disabled={available <= 0}
             onClick={onAction}
           >
             {editing
               ? lang === "zh"
                 ? "保存选择"
                 : "Save options"
-              : product.inStock
+              : available > 0
                 ? lang === "zh"
                   ? "加入购物车"
                   : "Add to bag"

@@ -120,7 +120,7 @@ During frontend development, Vite proxies `/api` requests to `http://localhost:3
 | Method | Endpoint | Description |
 | --- | --- | --- |
 | `GET` | `/api/products` | Retrieve products; supports `q`, `category`, `sale`, `inStock`, `minPrice`, `maxPrice`, `page`, and `limit` |
-| `GET` | `/api/products/:productId` | Retrieve product details, sizes, materials, price, and live availability |
+| `GET` | `/api/products/:productId` | Retrieve PostgreSQL-backed product details, variants, sizes, SKU inventory, materials, price, and live availability |
 | `POST` | `/api/auth/register` | Register a customer |
 | `POST` | `/api/auth/login` | Log in and create a secure server-side session |
 | `POST` | `/api/auth/logout` | Revoke the current session |
@@ -185,7 +185,7 @@ The original Express server remains available for local development through `npm
 
 ### Managed PostgreSQL and migrations
 
-The application supports managed PostgreSQL through Neon's serverless HTTP driver. When `DATABASE_URL` is configured, Pages Functions use PostgreSQL; when it is absent, the existing D1 binding remains available as a transition fallback.
+The catalogue uses managed PostgreSQL through Neon's serverless HTTP driver. Products, bilingual copy, discounts, colour variants, variant images, sizes, and stock-bearing SKUs are stored in PostgreSQL instead of application constants. `DATABASE_URL` is therefore required for both the Pages Functions catalogue and the local Express catalogue.
 
 The version-controlled Drizzle schema is located in `db/schema.js`, and generated SQL migrations are stored in `drizzle/`. Use the following workflow after changing the schema:
 
@@ -193,6 +193,7 @@ The version-controlled Drizzle schema is located in `db/schema.js`, and generate
 npm run db:generate
 npm run db:check
 DATABASE_URL="postgresql://..." npm run db:migrate
+DATABASE_URL="postgresql://..." npm run db:seed
 ```
 
 For PowerShell:
@@ -200,9 +201,10 @@ For PowerShell:
 ```powershell
 $env:DATABASE_URL="postgresql://..."
 npm run db:migrate
+npm run db:seed
 ```
 
-Never commit `DATABASE_URL`. Store it as an encrypted Cloudflare Pages secret. Apply migrations before deploying application code that depends on a schema change. The PostgreSQL migrations create customers, verification tokens, sessions, rate limits, product inventory, addresses, orders, order items, foreign keys, indexes, and cascade rules. Order creation validates requested quantities against current inventory and deducts stock in the same database batch as the order.
+Never commit `DATABASE_URL`. Store it as an encrypted Cloudflare Pages secret and as a GitHub repository or production-environment secret for the deployment workflow. Apply migrations before deploying application code that depends on a schema change, then run the idempotent catalogue seed. The schema includes products, variants, sizes, SKUs, customers, verification tokens, sessions, rate limits, addresses, orders, order items, foreign keys, indexes, and cascade rules. The seed preserves totals from the legacy `product_inventory` table when it exists and distributes them across the new SKUs. Order creation validates the selected variant and size and deducts the matching SKU in the same database batch as the order.
 
 ## Automated quality and deployment
 
@@ -215,15 +217,14 @@ Frontend runtime errors and unhandled promise rejections are reported to `/api/e
 ## Current Limitations
 
 - No real payment gateway is connected; confirming a purchase only creates a simulated order.
-- The local Express server still uses JSON storage and is intended only for development. Cloudflare deployments can use managed PostgreSQL, with D1 retained only as a migration fallback.
+- The local Express server still uses JSON storage for development-only customer accounts, but reads products and SKU inventory from PostgreSQL.
 - There is no administration dashboard, inventory management, delivery tracking, refund workflow, or coupon system.
 - EUR prices use the latest EUR/CNY reference rate supplied by Frankfurter and cached for one hour. The last successful rate is retained locally as a network-failure fallback.
 - Customer service email addresses, telephone numbers, and opening hours shown in the application are sample information.
 
 ## Suggested Next Steps
 
-- Add automated database backups, migration checks in CI, and recovery drills
-- Use HTTPS, secure cookies, request rate limiting, and stronger session revocation controls
-- Add product details, search, filtering, pagination, and inventory validation
+- Add automated database backups and recovery drills
+- Build an administration dashboard for products, variants, and SKU inventory
 - Integrate payment, fulfilment, transactional order emails, and order status workflows
 - Add automated frontend and backend tests, error monitoring, and a deployment pipeline

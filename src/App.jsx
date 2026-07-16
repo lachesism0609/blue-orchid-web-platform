@@ -80,84 +80,6 @@ const copy = {
   },
 };
 
-const productNames = {
-  1: ["亚麻短袖衬衫", "Linen short-sleeve shirt"],
-  2: ["直筒牛仔裤", "Straight jeans"],
-  3: ["纯棉基础 T 恤", "Cotton basic T-shirt"],
-  4: ["宽松廓形西装外套", "Oversized blazer"],
-  5: ["轻盈棉质连衣裙", "Light cotton dress"],
-  6: ["极简白色运动鞋", "Minimal white sneakers"],
-  7: ["经典皮质托特包", "Classic leather tote"],
-  8: ["迷你斜挎包", "Mini crossbody bag"],
-  9: ["柔软乐福鞋", "Soft leather loafers"],
-  10: ["细带凉鞋", "Strappy sandals"],
-  11: ["简约弧形太阳镜", "Minimal curve sunglasses"],
-  12: ["真丝方巾", "Silk square scarf"],
-  13: ["垂感半身长裙", "Fluid midi skirt"],
-  14: ["针织开衫", "Fine knit cardigan"],
-  15: ["轻薄风衣", "Lightweight trench coat"],
-  16: ["亚麻立领衬衫", "Linen grandad shirt"],
-  17: ["锥形休闲长裤", "Tapered trousers"],
-  18: ["简约圆领卫衣", "Minimal crew sweatshirt"],
-  19: ["轻量夹克", "Lightweight jacket"],
-  20: ["编织腋下包", "Woven shoulder bag"],
-  21: ["通勤双肩包", "Commuter backpack"],
-  22: ["小号手提包", "Small top-handle bag"],
-  23: ["尼龙旅行包", "Nylon travel bag"],
-  24: ["复古跑鞋", "Retro runner"],
-  25: ["方头芭蕾鞋", "Square-toe ballet flats"],
-  26: ["真皮短靴", "Leather ankle boots"],
-  27: ["精工腕表", "Classic wristwatch"],
-  28: ["羊毛渔夫帽", "Wool bucket hat"],
-  29: ["细链项链", "Fine chain necklace"],
-  30: ["皮质腰带", "Leather belt"],
-};
-const legacyCategories = {
-  1: "women",
-  2: "men",
-  3: "men",
-  4: "women",
-  5: "women",
-  6: "shoes",
-};
-const saleDiscounts = {
-  1: 0.8,
-  2: 0.85,
-  3: 0.75,
-  9: 0.8,
-  10: 0.7,
-  11: 0.75,
-  12: 0.8,
-  13: 0.85,
-  16: 0.8,
-  18: 0.75,
-  25: 0.8,
-  28: 0.7,
-  29: 0.8,
-  30: 0.75,
-};
-const variantImages = {
-  women: [
-    "https://images.unsplash.com/photo-1485230895905-ec40ba36b9bc?auto=format&fit=crop&w=750&q=85",
-    "https://images.unsplash.com/photo-1496747611176-843222e1e57c?auto=format&fit=crop&w=750&q=85",
-  ],
-  men: [
-    "https://images.unsplash.com/photo-1617137968427-85924c800a22?auto=format&fit=crop&w=750&q=85",
-    "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=750&q=85",
-  ],
-  bags: [
-    "https://images.unsplash.com/photo-1566150905458-1bf1fc113f0d?auto=format&fit=crop&w=750&q=85",
-    "https://images.unsplash.com/photo-1594223274512-ad4803739b7c?auto=format&fit=crop&w=750&q=85",
-  ],
-  shoes: [
-    "https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=750&q=85",
-    "https://images.unsplash.com/photo-1543163521-1bf539c55dd2?auto=format&fit=crop&w=750&q=85",
-  ],
-  accessories: [
-    "https://images.unsplash.com/photo-1511499767150-a48a237f0083?auto=format&fit=crop&w=750&q=85",
-    "https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?auto=format&fit=crop&w=750&q=85",
-  ],
-};
 const navigation = [
   { id: "new", zh: "新品", en: "New in" },
   { id: "women", zh: "女装", en: "Women" },
@@ -183,6 +105,17 @@ const heroSlides = [
 
 export default function App() {
   const [products, setProducts] = useState([]);
+  const productNames = Object.fromEntries(
+    products.map((product) => [
+      product.id,
+      [product.nameZh || product.name, product.nameEn || product.name],
+    ]),
+  );
+  const saleDiscounts = Object.fromEntries(
+    products
+      .filter((product) => product.salePercent !== null)
+      .map((product) => [product.id, (100 - product.salePercent) / 100]),
+  );
   const [productSearch, setProductSearch] = useState("");
   const [priceFilter, setPriceFilter] = useState("all");
   const [stockOnly, setStockOnly] = useState(false);
@@ -628,16 +561,18 @@ export default function App() {
   const catalogName =
     navigation.find((item) => item.id === catalogPage)?.[lang] ||
     (lang === "zh" ? "商品" : "Products");
-  const categoryOf = (product) =>
-    product.category || legacyCategories[product.id];
   const selectedColorIndex = (product) => selectedColors[product.id] || 0;
   const variantImage = (product, colorIndex) => {
     const index = colorIndex ?? selectedColorIndex(product);
-    return index === 0
-      ? product.image
-      : variantImages[categoryOf(product)]?.[
-          (index - 1) % variantImages[categoryOf(product)].length
-        ] || product.image;
+    return product.variants?.[index]?.image || product.image;
+  };
+  const variantStock = (product, colorIndex, size) => {
+    const variant = product.variants?.[Number(colorIndex || 0)];
+    return (
+      product.skus?.find(
+        (sku) => sku.variantId === variant?.id && sku.size === size,
+      )?.stock ?? 0
+    );
   };
   const selectColor = (productId, index) => {
     setSelectedColors((current) => ({ ...current, [productId]: index }));
@@ -666,6 +601,14 @@ export default function App() {
     }
     const size = selectedSizes[product.id] || product.sizes?.[0] || "One size";
     const colorIndex = selectedColorIndex(product);
+    if (variantStock(product, colorIndex, size) < 1) {
+      setToast(
+        lang === "zh"
+          ? "所选款式和尺码暂时缺货"
+          : "This style and size is out of stock",
+      );
+      return;
+    }
     if (editingCartIndex !== null) {
       setCart((current) =>
         current.map((item, itemIndex) =>
@@ -688,11 +631,14 @@ export default function App() {
       current.map((item, itemIndex) => {
         if (itemIndex !== index) return item;
         const product = products.find((entry) => entry.id === item.productId);
+        const available = product
+          ? variantStock(product, item.colorIndex, item.size)
+          : 0;
         return {
           ...item,
           quantity: Math.max(
             1,
-            Math.min(10, product?.stock || 10, item.quantity + amount),
+            Math.min(10, available, item.quantity + amount),
           ),
         };
       }),
@@ -716,10 +662,7 @@ export default function App() {
     }));
     setSelectedProduct(item.product);
   };
-  const cartUnitPrice = (product) =>
-    saleDiscounts[product.id]
-      ? Math.round(product.price * saleDiscounts[product.id])
-      : product.price;
+  const cartUnitPrice = (product) => product.salePrice ?? product.price;
   const cartTotal = cartItems.reduce(
     (sum, item) => sum + cartUnitPrice(item.product) * item.quantity,
     0,
@@ -764,6 +707,8 @@ export default function App() {
           addressId: selectedAddressId,
           items: cartItems.map((item) => ({
             productId: item.productId,
+            variantId:
+              item.product.variants?.[Number(item.colorIndex || 0)]?.id,
             quantity: item.quantity,
             size: item.size || item.product.sizes?.[0] || "One size",
           })),
@@ -814,12 +759,11 @@ export default function App() {
   useEffect(() => {
     setCatalogPageNumber(1);
   }, [catalogPage, productSearch, priceFilter, stockOnly]);
-  const salePrice = (product) =>
-    Math.round(product.price * (saleDiscounts[product.id] || 0.8));
+  const salePrice = (product) => product.salePrice ?? product.price;
   const saleLabel = (product) =>
     lang === "zh"
-      ? `${(saleDiscounts[product.id] || 0.8) * 10}折`
-      : `${Math.round((1 - (saleDiscounts[product.id] || 0.8)) * 100)}% OFF`;
+      ? `${(100 - product.salePercent) / 10}折`
+      : `${product.salePercent}% OFF`;
   const saveProfile = async (event) => {
     event.preventDefault();
     try {

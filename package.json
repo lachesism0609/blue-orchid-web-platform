@@ -17,6 +17,7 @@
     "format:check": "prettier --check \"src/**/*.{js,jsx}\" tests",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "db:seed": "node db/seed.js",
     "db:check": "drizzle-kit check"
   },
   "dependencies": {
