@@ -32,6 +32,12 @@ const ToolIcon = ({ name }) => (
             <path d="M8 9V6a4 4 0 0 1 8 0v3" />
           </>
         ),
+        admin: (
+          <>
+            <rect x="4" y="5" width="16" height="14" rx="2" />
+            <path d="M8 9h8M8 13h5" />
+          </>
+        ),
       }[name]
     }
   </svg>
@@ -55,6 +61,7 @@ export default function StoreHeader({
   onHome,
   onMenu,
   onNavigate,
+  onAdmin,
   onAccount,
   onFavourites,
   onCart,
@@ -122,6 +129,16 @@ export default function StoreHeader({
               placeholder={searchPlaceholder}
             />
           </label>
+          {user?.role === "admin" && (
+            <button
+              className="admin-button"
+              onClick={onAdmin}
+              title={lang === "zh" ? "管理后台" : "Administration"}
+              aria-label={lang === "zh" ? "管理后台" : "Administration"}
+            >
+              <ToolIcon name="admin" />
+            </button>
+          )}
           <button className="account-button" onClick={onAccount}>
             {user ? (
               <span>{user.name.slice(0, 1).toUpperCase()}</span>

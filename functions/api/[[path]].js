@@ -1,6 +1,7 @@
 import { createDatabase } from '../_lib/database.js'
 import { productCatalogue, selectedSku } from '../_lib/catalog.js'
 import { customerStoreState } from '../_lib/customer-store.js'
+import { createAdminProduct, isAdmin, normalizeOrderStatus, orderStatuses, validateProductInput } from '../_lib/admin.js'
 
 const textEncoder = new TextEncoder()
 const sessionDuration = 60 * 60 * 24 * 7
@@ -227,6 +228,7 @@ function publicUser(user) {
     name: user.name,
     email: user.email,
     phone: user.phone || '',
+    role: user.role || 'customer',
     createdAt: user.created_at,
   }
 }
@@ -286,6 +288,39 @@ async function listOrders(env, userId) {
         variantId: item.variant_id,
         variantName: item.variant_name || 'Default',
         unitPrice: item.unit_price,
+      })),
+  }))
+}
+
+async function listAdminOrders(database) {
+  const { results: orders } = await database.prepare('SELECT o.*, u.name AS customer_name, u.email AS customer_email FROM orders o JOIN users u ON u.id = o.user_id ORDER BY o.created_at DESC').bind().all()
+  if (!orders.length) return []
+  const placeholders = orders.map(() => '?').join(', ')
+  const { results: items } = await database
+    .prepare(`SELECT * FROM order_items WHERE order_id IN (${placeholders}) ORDER BY id`)
+    .bind(...orders.map((order) => order.id))
+    .all()
+  return orders.map((order) => ({
+    id: order.id,
+    customer: {
+      id: order.user_id,
+      name: order.customer_name,
+      email: order.customer_email,
+    },
+    total: Number(order.total),
+    status: normalizeOrderStatus(order.status),
+    address: typeof order.address_json === 'string' ? JSON.parse(order.address_json) : order.address_json,
+    createdAt: order.created_at,
+    items: items
+      .filter((item) => item.order_id === order.id)
+      .map((item) => ({
+        productId: Number(item.product_id),
+        name: item.name,
+        quantity: Number(item.quantity),
+        size: item.size || 'One size',
+        variantId: item.variant_id === null ? null : Number(item.variant_id),
+        variantName: item.variant_name || 'Default',
+        unitPrice: Number(item.unit_price),
       })),
   }))
 }
@@ -460,6 +495,107 @@ export async function onRequest({ request, env, params }) {
       return json({ message: 'All sessions revoked.' }, 200, {
         'Set-Cookie': sessionCookieHeader('', 0),
       })
+    }
+
+    if (route.startsWith('admin/')) {
+      if (!isAdmin(user)) return json({ message: 'Administrator access is required.' }, 403)
+
+      if (method === 'GET' && route === 'admin/products') {
+        return json({
+          products: await productCatalogue(env.DB, { includeInactive: true }),
+        })
+      }
+
+      if (method === 'POST' && route === 'admin/products') {
+        const result = await createAdminProduct(env.DB, await requestBody(request))
+        return result.errors ? json({ message: result.errors[0], errors: result.errors }, 400) : json(result, 201)
+      }
+
+      const adminProductMatch = route.match(/^admin\/products\/(\d+)$/)
+      if (method === 'PUT' && adminProductMatch) {
+        const products = await productCatalogue(env.DB, {
+          includeInactive: true,
+        })
+        const existing = products.find((product) => product.id === Number(adminProductMatch[1]))
+        if (!existing) return json({ message: 'Product not found.' }, 404)
+        const body = await requestBody(request)
+        const { value, errors } = validateProductInput({
+          ...existing,
+          ...body,
+          sizes: existing.sizes,
+          imageUrl: body.imageUrl ?? existing.image,
+        })
+        if (errors.length) return json({ message: errors[0], errors }, 400)
+        const now = new Date().toISOString()
+        await env.DB.prepare(
+          'UPDATE products SET category = ?, name_zh = ?, name_en = ?, description_zh = ?, description_en = ?, materials_zh = ?, materials_en = ?, price = ?, sale_percent = ?, image_url = ?, active = ?, updated_at = ? WHERE id = ?',
+        )
+          .bind(value.category, value.nameZh, value.nameEn, value.descriptionZh, value.descriptionEn, value.materialsZh, value.materialsEn, value.price, value.salePercent, value.imageUrl, value.active, now, existing.id)
+          .run()
+        return json({
+          product: (await productCatalogue(env.DB, { includeInactive: true })).find((product) => product.id === existing.id),
+        })
+      }
+
+      const adminVariantMatch = route.match(/^admin\/variants\/(\d+)$/)
+      if (method === 'PUT' && adminVariantMatch) {
+        const body = await requestBody(request)
+        const nameZh = String(body.nameZh || '').trim()
+        const nameEn = String(body.nameEn || '').trim()
+        const colorHex = String(body.colorHex || '').trim()
+        const imageUrl = String(body.imageUrl || '').trim()
+        if (!nameZh || !nameEn || !imageUrl || !/^#[0-9a-f]{6}$/i.test(colorHex))
+          return json(
+            {
+              message: 'Style names, image, and a valid hex colour are required.',
+            },
+            400,
+          )
+        const result = await env.DB.prepare('UPDATE product_variants SET name_zh = ?, name_en = ?, color_hex = ?, image_url = ? WHERE id = ?').bind(nameZh, nameEn, colorHex, imageUrl, Number(adminVariantMatch[1])).run()
+        if (!result.meta.changes) return json({ message: 'Product style not found.' }, 404)
+        return json({
+          products: await productCatalogue(env.DB, { includeInactive: true }),
+        })
+      }
+
+      const adminSkuMatch = route.match(/^admin\/skus\/(\d+)$/)
+      if (method === 'PUT' && adminSkuMatch) {
+        const body = await requestBody(request)
+        const stock = Number(body.stock)
+        if (!Number.isInteger(stock) || stock < 0 || stock > 100000) return json({ message: 'Stock must be a whole number between 0 and 100,000.' }, 400)
+        const result = await env.DB.prepare('UPDATE product_skus SET stock = ?, updated_at = ? WHERE id = ?').bind(stock, new Date().toISOString(), Number(adminSkuMatch[1])).run()
+        if (!result.meta.changes) return json({ message: 'SKU not found.' }, 404)
+        return json({ stock })
+      }
+
+      if (method === 'GET' && route === 'admin/orders') {
+        const allOrders = await listAdminOrders(env.DB)
+        const query = url.searchParams.get('q')?.trim().toLowerCase() || ''
+        const status = url.searchParams.get('status') || ''
+        const requestedPage = Math.max(1, Number(url.searchParams.get('page')) || 1)
+        const limit = Math.max(1, Math.min(100, Number(url.searchParams.get('limit')) || 25))
+        const filtered = allOrders.filter((order) => (!query || `${order.id} ${order.customer.name} ${order.customer.email}`.toLowerCase().includes(query)) && (!status || order.status === status))
+        const pages = Math.max(1, Math.ceil(filtered.length / limit))
+        const page = Math.min(requestedPage, pages)
+        return json({
+          orders: filtered.slice((page - 1) * limit, page * limit),
+          pagination: { page, limit, total: filtered.length, pages },
+        })
+      }
+
+      const adminOrderMatch = route.match(/^admin\/orders\/([^/]+)$/)
+      if (method === 'PUT' && adminOrderMatch) {
+        const body = await requestBody(request)
+        const status = String(body.status || '')
+          .trim()
+          .toLowerCase()
+        if (!orderStatuses.includes(status)) return json({ message: 'Unsupported order status.' }, 400)
+        const result = await env.DB.prepare('UPDATE orders SET status = ? WHERE id = ?').bind(status, decodeURIComponent(adminOrderMatch[1])).run()
+        if (!result.meta.changes) return json({ message: 'Order not found.' }, 404)
+        return json({ status })
+      }
+
+      return json({ message: 'Admin endpoint not found.' }, 404)
     }
 
     if (method === 'PUT' && route === 'account/profile') {
@@ -672,7 +808,7 @@ export async function onRequest({ request, env, params }) {
         id: `BO-${Date.now().toString().slice(-8)}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`,
         items: orderItems,
         total,
-        status: '订单已确认',
+        status: 'confirmed',
         address,
         createdAt: new Date().toISOString(),
       }

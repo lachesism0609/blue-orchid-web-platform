@@ -1,3 +1,5 @@
+import { orderStatusLabel } from "../store-utils.js";
+
 const tabs = {
   orders: ["订单历史", "Order history"],
   addresses: ["地址管理", "Addresses"],
@@ -69,7 +71,7 @@ export default function AccountPage({
                     >
                       <span>{order.id}</span>
                       <strong>{formatPrice(order.total)}</strong>
-                      <small>{order.status}</small>
+                      <small>{orderStatusLabel(order.status, lang)}</small>
                     </article>
                   ))}
                 </div>

@@ -11,6 +11,7 @@ import CatalogPage from "./components/CatalogPage.jsx";
 import AboutPage from "./components/AboutPage.jsx";
 import CartPage from "./components/CartPage.jsx";
 import AccountPage from "./components/AccountPage.jsx";
+import AdminPage from "./components/AdminPage.jsx";
 import Toast from "./components/Toast.jsx";
 
 const copy = {
@@ -153,6 +154,13 @@ export default function App() {
   const [accountData, setAccountData] = useState({ orders: [], addresses: [] });
   const [accountNotice, setAccountNotice] = useState("");
   const [selectedOrder, setSelectedOrder] = useState(null);
+  const [adminPage, setAdminPage] = useState(
+    () => window.location.hash === "#admin",
+  );
+  const [adminProducts, setAdminProducts] = useState([]);
+  const [adminOrders, setAdminOrders] = useState([]);
+  const [adminOrderTotal, setAdminOrderTotal] = useState(0);
+  const [adminLoading, setAdminLoading] = useState(false);
   const [catalogPage, setCatalogPage] = useState(() =>
     navigation.some((item) => item.id === window.location.hash.slice(1)) &&
     window.location.hash !== "#about"
@@ -247,6 +255,9 @@ export default function App() {
     if (accountPage) window.history.replaceState(null, "", "#account");
   }, [accountPage]);
   useEffect(() => {
+    if (adminPage) window.history.replaceState(null, "", "#admin");
+  }, [adminPage]);
+  useEffect(() => {
     if (catalogPage) window.history.replaceState(null, "", `#${catalogPage}`);
   }, [catalogPage]);
   useEffect(() => {
@@ -309,6 +320,7 @@ export default function App() {
       catalogPage ||
       aboutPage ||
       accountPage ||
+      adminPage ||
       favouritesPage ||
       cartPage ||
       authOpen,
@@ -317,7 +329,15 @@ export default function App() {
     return () => {
       document.body.style.overflow = "";
     };
-  }, [catalogPage, aboutPage, accountPage, favouritesPage, cartPage, authOpen]);
+  }, [
+    catalogPage,
+    aboutPage,
+    accountPage,
+    adminPage,
+    favouritesPage,
+    cartPage,
+    authOpen,
+  ]);
   useEffect(() => {
     const timer = setInterval(
       () => setActiveSlide((current) => (current + 1) % heroSlides.length),
@@ -375,6 +395,49 @@ export default function App() {
   useEffect(() => {
     if (accountPage && authUser) loadAccount();
   }, [accountPage]);
+  const loadAdmin = async () => {
+    if (authUser?.role !== "admin") return;
+    setAdminLoading(true);
+    try {
+      const [productData, orderData] = await Promise.all([
+        accountRequest("/api/admin/products"),
+        accountRequest("/api/admin/orders?limit=100"),
+      ]);
+      setAdminProducts(productData.products || []);
+      setAdminOrders(orderData.orders || []);
+      setAdminOrderTotal(orderData.pagination?.total || 0);
+    } catch (error) {
+      setToast(error.message);
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+  const reloadStoreProducts = async () => {
+    const response = await fetch("/api/products");
+    if (!response.ok)
+      throw new Error("Unable to reload the product catalogue.");
+    setProducts(await response.json());
+  };
+  useEffect(() => {
+    if (adminPage && authUser?.role === "admin") loadAdmin();
+    if (adminPage && authUser && authUser.role !== "admin") {
+      setAdminPage(false);
+      setToast(
+        lang === "zh"
+          ? "此账号没有管理员权限。"
+          : "This account does not have administrator access.",
+      );
+    }
+  }, [adminPage, authUser?.id, authUser?.role]);
+
+  const adminAction = async (path, method, body) => {
+    const data = await accountRequest(path, {
+      method,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    await Promise.all([loadAdmin(), reloadStoreProducts()]);
+    return data;
+  };
   const toggleLike = async (id) => {
     if (!authUser) {
       setAuthError(
@@ -515,6 +578,7 @@ export default function App() {
   };
   const openAccount = () => {
     setAccountPage(true);
+    setAdminPage(false);
     setFavouritesPage(false);
     setCatalogPage("");
     setAboutPage(false);
@@ -523,10 +587,24 @@ export default function App() {
     setAccountPage(false);
     window.history.replaceState(null, "", window.location.pathname);
   };
+  const openAdmin = () => {
+    if (authUser?.role !== "admin") return;
+    setAdminPage(true);
+    setAccountPage(false);
+    setCatalogPage("");
+    setAboutPage(false);
+    setFavouritesPage(false);
+    setCartPage(false);
+  };
+  const closeAdmin = () => {
+    setAdminPage(false);
+    window.history.replaceState(null, "", window.location.pathname);
+  };
   const openCatalog = (id) => {
     setCatalogPage(id === "about" ? "" : id);
     setAboutPage(id === "about");
     setAccountPage(false);
+    setAdminPage(false);
     setFavouritesPage(false);
     setMenuOpen(false);
   };
@@ -549,6 +627,7 @@ export default function App() {
     setCatalogPage("");
     setAboutPage(false);
     setAccountPage(false);
+    setAdminPage(false);
   };
   const closeFavourites = () => {
     setFavouritesPage(false);
@@ -563,6 +642,7 @@ export default function App() {
   const goHome = () => {
     closeCatalog();
     closeAccount();
+    closeAdmin();
     closeFavourites();
     closeCart();
     setMenuOpen(false);
@@ -866,6 +946,7 @@ export default function App() {
         onHome={goHome}
         onMenu={() => setMenuOpen((current) => !current)}
         onNavigate={openCatalog}
+        onAdmin={openAdmin}
         onAccount={authUser ? openAccount : openAuth}
         onFavourites={openFavourites}
         onCart={() => {
@@ -873,6 +954,7 @@ export default function App() {
           setCatalogPage("");
           setFavouritesPage(false);
           setAccountPage(false);
+          setAdminPage(false);
         }}
       />
       <HomePage
@@ -1013,6 +1095,34 @@ export default function App() {
       />
       <AboutPage open={aboutPage} lang={lang} />
       <Toast message={toast} />
+      <AdminPage
+        open={adminPage}
+        user={authUser}
+        lang={lang}
+        products={adminProducts}
+        orders={adminOrders}
+        orderTotal={adminOrderTotal}
+        loading={adminLoading}
+        onClose={closeAdmin}
+        onReload={loadAdmin}
+        onCreate={(payload) =>
+          adminAction("/api/admin/products", "POST", payload)
+        }
+        onUpdateProduct={(id, payload) =>
+          adminAction(`/api/admin/products/${id}`, "PUT", payload)
+        }
+        onUpdateVariant={(id, payload) =>
+          adminAction(`/api/admin/variants/${id}`, "PUT", payload)
+        }
+        onUpdateSku={(id, stock) =>
+          adminAction(`/api/admin/skus/${id}`, "PUT", { stock })
+        }
+        onUpdateOrder={(id, status) =>
+          adminAction(`/api/admin/orders/${encodeURIComponent(id)}`, "PUT", {
+            status,
+          })
+        }
+      />
       <AccountPage
         open={accountPage}
         user={authUser}

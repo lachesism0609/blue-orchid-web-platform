@@ -5,6 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createDatabase } from '../functions/_lib/database.js'
 import { productCatalogue, selectedSku } from '../functions/_lib/catalog.js'
+import { createAdminProduct, normalizeOrderStatus, orderStatuses, validateProductInput } from '../functions/_lib/admin.js'
 
 const app = express()
 const port = process.env.PORT || 3010
@@ -17,6 +18,12 @@ const sessionCookie = 'blue_orchid_session'
 const verificationDuration = 60 * 60 * 24
 const siteUrl = (process.env.SITE_URL || 'http://localhost:5173').replace(/\/$/, '')
 const database = createDatabase(process.env)
+const adminEmails = new Set(
+  String(process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || '')
+    .split(',')
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean),
+)
 
 app.use(express.json({ limit: '20kb' }))
 
@@ -106,11 +113,13 @@ function verifyToken(token) {
   }
 }
 
+const localRole = (user) => (user.role === 'admin' || adminEmails.has(String(user.email).toLowerCase()) ? 'admin' : 'customer')
 const publicUser = (user) => ({
   id: user.id,
   name: user.name,
   email: user.email,
   phone: user.phone || '',
+  role: localRole(user),
   createdAt: user.createdAt,
 })
 const requireAuth = async (req, res, next) => {
@@ -126,6 +135,10 @@ const requireAuth = async (req, res, next) => {
   const user = (await readUsers()).find((item) => item.id === payload.sub)
   if (!user) return res.status(401).json({ message: '登录状态无效，请重新登录。' })
   req.user = user
+  next()
+}
+const requireAdmin = (req, res, next) => {
+  if (localRole(req.user) !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' })
   next()
 }
 
@@ -285,6 +298,136 @@ app.post('/api/auth/logout', (_req, res) => {
     secure: siteUrl.startsWith('https://'),
   })
   res.json({ message: 'Signed out.' })
+})
+
+app.get('/api/admin/products', requireAuth, requireAdmin, async (_req, res, next) => {
+  try {
+    if (!database) return res.status(503).json({ message: 'DATABASE_URL is required.' })
+    res.json({
+      products: await productCatalogue(database, { includeInactive: true }),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/admin/products', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    if (!database) return res.status(503).json({ message: 'DATABASE_URL is required.' })
+    const result = await createAdminProduct(database, req.body)
+    if (result.errors) return res.status(400).json({ message: result.errors[0], errors: result.errors })
+    res.status(201).json(result)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.put('/api/admin/products/:productId', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    if (!database) return res.status(503).json({ message: 'DATABASE_URL is required.' })
+    const products = await productCatalogue(database, {
+      includeInactive: true,
+    })
+    const existing = products.find((product) => product.id === Number(req.params.productId))
+    if (!existing) return res.status(404).json({ message: 'Product not found.' })
+    const { value, errors } = validateProductInput({
+      ...existing,
+      ...req.body,
+      sizes: existing.sizes,
+      imageUrl: req.body.imageUrl ?? existing.image,
+    })
+    if (errors.length) return res.status(400).json({ message: errors[0], errors })
+    await database
+      .prepare('UPDATE products SET category = ?, name_zh = ?, name_en = ?, description_zh = ?, description_en = ?, materials_zh = ?, materials_en = ?, price = ?, sale_percent = ?, image_url = ?, active = ?, updated_at = ? WHERE id = ?')
+      .bind(value.category, value.nameZh, value.nameEn, value.descriptionZh, value.descriptionEn, value.materialsZh, value.materialsEn, value.price, value.salePercent, value.imageUrl, value.active, new Date().toISOString(), existing.id)
+      .run()
+    res.json({
+      product: (await productCatalogue(database, { includeInactive: true })).find((product) => product.id === existing.id),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.put('/api/admin/variants/:variantId', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const nameZh = String(req.body.nameZh || '').trim()
+    const nameEn = String(req.body.nameEn || '').trim()
+    const colorHex = String(req.body.colorHex || '').trim()
+    const imageUrl = String(req.body.imageUrl || '').trim()
+    if (!nameZh || !nameEn || !imageUrl || !/^#[0-9a-f]{6}$/i.test(colorHex))
+      return res.status(400).json({
+        message: 'Style names, image, and a valid hex colour are required.',
+      })
+    const result = await database.prepare('UPDATE product_variants SET name_zh = ?, name_en = ?, color_hex = ?, image_url = ? WHERE id = ?').bind(nameZh, nameEn, colorHex, imageUrl, Number(req.params.variantId)).run()
+    if (!result.meta.changes) return res.status(404).json({ message: 'Product style not found.' })
+    res.json({
+      products: await productCatalogue(database, { includeInactive: true }),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.put('/api/admin/skus/:skuId', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const stock = Number(req.body.stock)
+    if (!Number.isInteger(stock) || stock < 0 || stock > 100000)
+      return res.status(400).json({
+        message: 'Stock must be a whole number between 0 and 100,000.',
+      })
+    const result = await database.prepare('UPDATE product_skus SET stock = ?, updated_at = ? WHERE id = ?').bind(stock, new Date().toISOString(), Number(req.params.skuId)).run()
+    if (!result.meta.changes) return res.status(404).json({ message: 'SKU not found.' })
+    res.json({ stock })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/admin/orders', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const users = await readUsers()
+    const query = String(req.query.q || '')
+      .trim()
+      .toLowerCase()
+    const status = String(req.query.status || '')
+    const requestedPage = Math.max(1, Number(req.query.page) || 1)
+    const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 25))
+    const allOrders = users.flatMap((user) =>
+      (user.orders || []).map((order) => ({
+        ...order,
+        status: normalizeOrderStatus(order.status),
+        customer: { id: user.id, name: user.name, email: user.email },
+      })),
+    )
+    allOrders.sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt))
+    const filtered = allOrders.filter((order) => (!query || `${order.id} ${order.customer.name} ${order.customer.email}`.toLowerCase().includes(query)) && (!status || order.status === status))
+    const pages = Math.max(1, Math.ceil(filtered.length / limit))
+    const page = Math.min(requestedPage, pages)
+    res.json({
+      orders: filtered.slice((page - 1) * limit, page * limit),
+      pagination: { page, limit, total: filtered.length, pages },
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.put('/api/admin/orders/:orderId', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const status = String(req.body.status || '')
+      .trim()
+      .toLowerCase()
+    if (!orderStatuses.includes(status)) return res.status(400).json({ message: 'Unsupported order status.' })
+    const users = await readUsers()
+    const order = users.flatMap((user) => user.orders || []).find((entry) => entry.id === req.params.orderId)
+    if (!order) return res.status(404).json({ message: 'Order not found.' })
+    order.status = status
+    await writeUsers(users)
+    res.json({ status })
+  } catch (error) {
+    next(error)
+  }
 })
 
 app.put('/api/account/profile', requireAuth, async (req, res, next) => {
@@ -514,7 +657,7 @@ app.post('/api/account/orders', requireAuth, async (req, res, next) => {
       id: `BO-${Date.now().toString().slice(-8)}`,
       items: orderItems,
       total,
-      status: '订单已确认',
+      status: 'confirmed',
       address,
       createdAt: new Date().toISOString(),
     }

@@ -8,6 +8,7 @@ export const users = pgTable(
     name: text('name').notNull(),
     email: text('email').notNull(),
     phone: text('phone').notNull().default(''),
+    role: text('role').notNull().default('customer'),
     passwordHash: text('password_hash').notNull(),
     passwordSalt: text('password_salt').notNull(),
     emailVerified: integer('email_verified').notNull().default(0),
@@ -18,7 +19,12 @@ export const users = pgTable(
     }),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
   },
-  (table) => [uniqueIndex('users_email_idx').on(table.email), uniqueIndex('users_verification_token_hash_idx').on(table.verificationTokenHash)],
+  (table) => [
+    uniqueIndex('users_email_idx').on(table.email),
+    uniqueIndex('users_verification_token_hash_idx').on(table.verificationTokenHash),
+    index('users_role_idx').on(table.role),
+    check('users_role_check', sql`${table.role} IN ('customer', 'admin')`),
+  ],
 )
 
 export const sessions = pgTable(

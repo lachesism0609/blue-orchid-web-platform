@@ -1,3 +1,5 @@
+import { orderStatusLabel } from "../store-utils.js";
+
 export default function OrderDetail({
   order,
   lang,
@@ -28,7 +30,7 @@ export default function OrderDetail({
             <h2>{lang === "zh" ? "订单详情" : "Order details"}</h2>
             <span>{order.id}</span>
           </div>
-          <strong>{order.status}</strong>
+          <strong>{orderStatusLabel(order.status, lang)}</strong>
         </div>
         <div className="order-meta">
           <p>

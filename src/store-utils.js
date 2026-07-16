@@ -52,3 +52,16 @@ export function updateCartOptions(cart, index, options) {
     itemIndex === index ? { ...item, ...options } : item,
   );
 }
+
+const orderStatusCopy = {
+  confirmed: ["已确认", "Confirmed"],
+  processing: ["处理中", "Processing"],
+  shipped: ["已发货", "Shipped"],
+  completed: ["已完成", "Completed"],
+  cancelled: ["已取消", "Cancelled"],
+  订单已确认: ["已确认", "Confirmed"],
+};
+
+export function orderStatusLabel(status, lang = "zh") {
+  return orderStatusCopy[status]?.[lang === "zh" ? 0 : 1] || status;
+}

@@ -57,6 +57,13 @@
       "when": 1784221146970,
       "tag": "0007_mean_master_chief",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784223768897,
+      "tag": "0008_fair_greymalkin",
+      "breakpoints": true
     }
   ]
 }

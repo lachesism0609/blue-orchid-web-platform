@@ -72,6 +72,8 @@ class AuthDatabase {
           async all() {
             if (sql === catalogueQueries.productQuery)
               return { results: database.productRows };
+            if (sql === catalogueQueries.adminProductQuery)
+              return { results: database.productRows };
             if (sql === catalogueQueries.variantQuery)
               return { results: database.variantRows };
             if (sql === catalogueQueries.sizeQuery)
@@ -186,6 +188,7 @@ class AuthDatabase {
                 password_hash,
                 password_salt,
                 email_verified: 0,
+                role: "customer",
                 created_at,
               });
             } else if (
@@ -261,6 +264,12 @@ class AuthDatabase {
                 source: values[1],
                 message: values[2],
               });
+            } else if (sql.startsWith("UPDATE product_skus SET stock")) {
+              const sku = database.skuRows.find(
+                (entry) => entry.id === values[2],
+              );
+              if (!sku) return { success: true, meta: { changes: 0 } };
+              sku.stock = values[0];
             } else if (sql.startsWith("INSERT INTO favourites")) {
               if (
                 !database.favourites.some(
@@ -533,7 +542,32 @@ test("registers, verifies email, logs in, rejects a bad password, and validates 
     context(databaseEnv, "auth/me", { cookie }),
   );
   assert.equal(currentUser.status, 200);
-  assert.equal((await currentUser.json()).user.name, credentials.name);
+  const currentUserBody = await currentUser.json();
+  assert.equal(currentUserBody.user.name, credentials.name);
+  assert.equal(currentUserBody.user.role, "customer");
+
+  const blockedAdmin = await onRequest(
+    context(databaseEnv, "admin/products", { cookie }),
+  );
+  assert.equal(blockedAdmin.status, 403);
+
+  databaseEnv.DB.users[0].role = "admin";
+  const adminProducts = await onRequest(
+    context(databaseEnv, "admin/products", { cookie }),
+  );
+  assert.equal(adminProducts.status, 200);
+  assert.equal((await adminProducts.json()).products.length, 30);
+
+  const skuId = databaseEnv.DB.skuRows[0].id;
+  const stockUpdate = await onRequest(
+    context(databaseEnv, `admin/skus/${skuId}`, {
+      method: "PUT",
+      cookie,
+      body: { stock: 9 },
+    }),
+  );
+  assert.equal(stockUpdate.status, 200);
+  assert.equal(databaseEnv.DB.skuRows[0].stock, 9);
 
   const logout = await onRequest(
     context(databaseEnv, "auth/logout", { method: "POST", cookie }),

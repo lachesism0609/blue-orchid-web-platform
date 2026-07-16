@@ -1,10 +1,10 @@
 # Blue Orchid Fashion Store
 
-Blue Orchid is a bilingual fashion e-commerce application built with React, Vite, Node.js, and Express. It covers the core shopping journey, including product discovery, favourites, cart management, checkout confirmation, customer accounts, and order history.
+Blue Orchid is a bilingual fashion e-commerce application built with React, Vite, Node.js, Cloudflare Pages Functions, Express, and PostgreSQL. It covers the core shopping journey plus a role-protected product, inventory, and order administration workspace.
 
 The project is suitable as an online fashion store prototype, a full-stack learning project, or a foundation for further commercial development.
 
-> This is currently a demonstration project. User data is stored in a local JSON file, currency conversion uses a fixed sample rate, and checkout does not process real payments.
+> This is currently a demonstration project. Production data is stored in managed PostgreSQL, the local Express fallback still uses a JSON file for customer accounts, and checkout does not process real payments.
 
 ## Features
 
@@ -31,7 +31,7 @@ The project is suitable as an online fashion store prototype, a full-stack learn
   5. View a purchase success page
   6. Automatically continue to Order History in the customer account
 - Order history and order details, including products, quantities, prices, order time, status, and delivery address
-- Cart and favourite data persisted in browser `localStorage`
+- Cart and favourite data synchronized through authenticated PostgreSQL records across refreshes and devices
 
 ### Customer Accounts
 
@@ -39,17 +39,26 @@ The project is suitable as an online fashion store prototype, a full-stack learn
 - Personal information viewing and editing
 - Delivery address creation, viewing, and deletion
 - Page restoration after refreshing account, cart, favourites, and category pages
-- Passwords stored using Node.js `scrypt` with a unique salt
-- HMAC-SHA256 signed authentication tokens with a default seven-day lifetime
+- Passwords stored with salted PBKDF2 in production and `scrypt` in the local Express fallback
+- Secure, HTTP-only cookie sessions with expiry, revocation, rate limiting, and session invalidation controls
+
+### Administration
+
+- Database-backed `customer` and `admin` roles with server-side authorization on every administration endpoint
+- Product creation and editing for bilingual names, descriptions, materials, category, price, sale percentage, visibility, and images
+- Colour/style editing and stock management at individual SKU and size level
+- Order review with customer, line-item, price, delivery-address, and timestamp details
+- Controlled order status workflow covering confirmed, processing, shipped, completed, and cancelled orders
+- Responsive administration workspace available from the header for administrator accounts
 
 ## Technology Stack
 
 | Layer | Technology |
 | --- | --- |
 | Frontend | React 18, Vite 6, CSS |
-| Backend | Node.js, Express 4 |
-| Authentication | `crypto.scryptSync`, HMAC-SHA256 tokens |
-| Data storage | Local JSON file and browser `localStorage` |
+| Backend | Cloudflare Pages Functions and Node.js / Express 4 |
+| Authentication | PBKDF2 or `crypto.scryptSync`, secure cookie sessions, database roles |
+| Data storage | Managed PostgreSQL with Drizzle migrations; local JSON development fallback |
 | Development proxy | Vite `/api` proxy to Express |
 
 ## Getting Started
@@ -112,6 +121,10 @@ The `npm run dev` command starts both the Vite frontend and Express backend. Reg
 | `npm run server` | Start only the Express backend on port 3010 by default |
 | `npm run build` | Create a production build in `dist/` |
 | `npm run preview` | Preview the production build locally |
+| `npm run db:generate` | Generate a Drizzle SQL migration from the managed schema |
+| `npm run db:migrate` | Apply pending PostgreSQL migrations |
+| `npm run db:seed` | Idempotently seed the product catalogue and SKU inventory |
+| `npm run db:promote-admin` | Promote the registered account in `ADMIN_EMAIL` to administrator |
 
 ## API Overview
 
@@ -206,6 +219,19 @@ npm run db:seed
 
 Never commit `DATABASE_URL`. Store it as an encrypted Cloudflare Pages secret and as a GitHub repository or production-environment secret for the deployment workflow. Apply migrations before deploying application code that depends on a schema change, then run the idempotent catalogue seed. The schema includes products, variants, sizes, SKUs, customers, verification tokens, sessions, rate limits, favourites, cart items, addresses, orders, order items, foreign keys, indexes, and cascade rules. Signed-in customers load favourites and cart selections from PostgreSQL, so those selections survive refreshes and are shared across devices. The seed preserves existing variant and size records, keeps legacy `product_inventory` totals when available, and distributes those totals across SKUs without clearing customer carts. Order creation reads the authenticated customer's server-side cart, validates every variant, size, quantity, and stock level, then deducts inventory and clears the cart in the same database transaction.
 
+### Provisioning an administrator
+
+Register and verify the account normally, apply the role migration, then promote that account by email:
+
+```powershell
+$env:DATABASE_URL="postgresql://..."
+$env:ADMIN_EMAIL="owner@example.com"
+npm run db:migrate
+npm run db:promote-admin
+```
+
+Sign out and sign in again so `/api/auth/me` returns the new `admin` role. The administration button then appears in the header. Local Express development can use `ADMIN_EMAIL` or a comma-separated `ADMIN_EMAILS` value without modifying the JSON account file. The browser never decides authorization: all `/api/admin/*` routes verify the authenticated role on the server.
+
 ## Automated quality and deployment
 
 `npm test` runs the frontend catalogue/cart logic suite and the Cloudflare API integration suite. GitHub Actions also runs the Drizzle schema check and production build for every pull request and production-branch push. Successful pushes deploy the verified `dist` artifact to Cloudflare Pages.
@@ -218,13 +244,12 @@ Frontend runtime errors and unhandled promise rejections are reported to `/api/e
 
 - No real payment gateway is connected; confirming a purchase only creates a simulated order.
 - The local Express server still uses JSON storage for development-only customer accounts, but reads products and SKU inventory from PostgreSQL.
-- There is no administration dashboard, inventory management, delivery tracking, refund workflow, or coupon system.
+- Delivery-provider tracking, refunds, returns, and coupon workflows are not yet implemented.
 - EUR prices use the latest EUR/CNY reference rate supplied by Frankfurter and cached for one hour. The last successful rate is retained locally as a network-failure fallback.
 - Customer service email addresses, telephone numbers, and opening hours shown in the application are sample information.
 
 ## Suggested Next Steps
 
 - Add automated database backups and recovery drills
-- Build an administration dashboard for products, variants, and SKU inventory
 - Integrate payment, fulfilment, transactional order emails, and order status workflows
 - Add automated frontend and backend tests, error monitoring, and a deployment pipeline
