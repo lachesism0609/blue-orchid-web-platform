@@ -20,25 +20,21 @@ for (const product of catalogSeed) {
   queries.push(sql`
     INSERT INTO products (id, category, name_zh, name_en, description_zh, description_en, materials_zh, materials_en, price, sale_percent, image_url, active, updated_at)
     VALUES (${product.id}, ${product.category}, ${product.nameZh}, ${product.nameEn}, ${product.descriptionZh}, ${product.descriptionEn}, ${product.materialsZh}, ${product.materialsEn}, ${product.price}, ${product.salePercent}, ${product.imageUrl}, 1, now())
-    ON CONFLICT (id) DO UPDATE SET category = EXCLUDED.category, name_zh = EXCLUDED.name_zh, name_en = EXCLUDED.name_en,
-      description_zh = EXCLUDED.description_zh, description_en = EXCLUDED.description_en, materials_zh = EXCLUDED.materials_zh,
-      materials_en = EXCLUDED.materials_en, price = EXCLUDED.price, sale_percent = EXCLUDED.sale_percent,
-      image_url = EXCLUDED.image_url, active = 1, updated_at = now()
+    ON CONFLICT (id) DO NOTHING
   `)
 
   for (const variant of product.variants) {
     queries.push(sql`
       INSERT INTO product_variants (id, product_id, code, name_zh, name_en, color_hex, image_url, position)
       VALUES (${variant.id}, ${product.id}, ${variant.code}, ${variant.nameZh}, ${variant.nameEn}, ${variant.colorHex}, ${variant.imageUrl}, ${variant.position})
-      ON CONFLICT (id) DO UPDATE SET product_id = EXCLUDED.product_id, code = EXCLUDED.code, name_zh = EXCLUDED.name_zh,
-        name_en = EXCLUDED.name_en, color_hex = EXCLUDED.color_hex, image_url = EXCLUDED.image_url, position = EXCLUDED.position
+      ON CONFLICT (id) DO NOTHING
     `)
   }
   for (const size of product.sizeOptions) {
     queries.push(sql`
       INSERT INTO product_sizes (id, product_id, label, position)
       VALUES (${size.id}, ${product.id}, ${size.label}, ${size.position})
-      ON CONFLICT (id) DO UPDATE SET product_id = EXCLUDED.product_id, label = EXCLUDED.label, position = EXCLUDED.position
+      ON CONFLICT (id) DO NOTHING
     `)
   }
 
@@ -54,12 +50,11 @@ for (const product of catalogSeed) {
       queries.push(sql`
         INSERT INTO product_skus (id, product_id, variant_id, size_id, sku, stock, updated_at)
         VALUES (${skuId}, ${product.id}, ${variant.id}, ${size.id}, ${sku}, ${stock}, now())
-        ON CONFLICT (id) DO UPDATE SET product_id = EXCLUDED.product_id, variant_id = EXCLUDED.variant_id,
-          size_id = EXCLUDED.size_id, sku = EXCLUDED.sku, stock = EXCLUDED.stock, updated_at = now()
+        ON CONFLICT (id) DO NOTHING
       `)
     }
   }
 }
 
 await sql.transaction(queries)
-console.log(`Seeded ${catalogSeed.length} products with variants, sizes, and SKU inventory.`)
+console.log(`Ensured ${catalogSeed.length} seed products and missing variant, size, and SKU records are present without overwriting managed catalogue data.`)
