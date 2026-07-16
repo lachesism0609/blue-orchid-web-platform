@@ -18,6 +18,66 @@ await sql`
   )
 `
 
+// Releases before the managed migration pipeline created parts of this schema
+// directly. Complete that additive legacy schema before recording its baseline.
+await sql.transaction([
+  sql.query(`
+    CREATE TABLE IF NOT EXISTS rate_limits (
+      "key" text PRIMARY KEY NOT NULL,
+      "count" integer DEFAULT 0 NOT NULL,
+      "reset_at" timestamp with time zone NOT NULL
+    )
+  `, []),
+  sql.query(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      "id" text PRIMARY KEY NOT NULL,
+      "user_id" text NOT NULL,
+      "token_hash" text NOT NULL,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "expires_at" timestamp with time zone NOT NULL,
+      "revoked_at" timestamp with time zone,
+      "last_seen_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "user_agent" text DEFAULT '' NOT NULL,
+      "ip_address" text DEFAULT '' NOT NULL
+    )
+  `, []),
+  sql.query(`
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'sessions_user_id_users_id_fk') THEN
+        ALTER TABLE sessions ADD CONSTRAINT sessions_user_id_users_id_fk
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+      END IF;
+    END $$
+  `, []),
+  sql.query('CREATE INDEX IF NOT EXISTS rate_limits_reset_at_idx ON rate_limits (reset_at)', []),
+  sql.query('CREATE UNIQUE INDEX IF NOT EXISTS sessions_token_hash_idx ON sessions (token_hash)', []),
+  sql.query('CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions (user_id)', []),
+  sql.query('CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions (expires_at)', []),
+  sql.query(`
+    CREATE TABLE IF NOT EXISTS product_inventory (
+      "product_id" integer PRIMARY KEY NOT NULL,
+      "stock" integer DEFAULT 0 NOT NULL,
+      "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+    )
+  `, []),
+  sql.query('CREATE INDEX IF NOT EXISTS product_inventory_stock_idx ON product_inventory (stock)', []),
+  sql.query("ALTER TABLE order_items ADD COLUMN IF NOT EXISTS size text DEFAULT 'One size' NOT NULL", []),
+  sql.query(`
+    CREATE TABLE IF NOT EXISTS error_events (
+      "id" text PRIMARY KEY NOT NULL,
+      "source" text NOT NULL,
+      "message" text NOT NULL,
+      "stack" text DEFAULT '' NOT NULL,
+      "url" text DEFAULT '' NOT NULL,
+      "user_agent" text DEFAULT '' NOT NULL,
+      "ip_hash" text DEFAULT '' NOT NULL,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL
+    )
+  `, []),
+  sql.query('CREATE INDEX IF NOT EXISTS error_events_created_at_idx ON error_events (created_at)', []),
+  sql.query('CREATE INDEX IF NOT EXISTS error_events_source_idx ON error_events (source)', [])
+])
+
 const legacy = await sql`
   SELECT
     to_regclass('public.addresses') IS NOT NULL AS addresses,
