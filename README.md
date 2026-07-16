@@ -187,7 +187,7 @@ The original Express server remains available for local development through `npm
 
 The catalogue uses managed PostgreSQL through Neon's serverless HTTP driver. Products, bilingual copy, discounts, colour variants, variant images, sizes, and stock-bearing SKUs are stored in PostgreSQL instead of application constants. `DATABASE_URL` is therefore required for both the Pages Functions catalogue and the local Express catalogue.
 
-The version-controlled Drizzle schema is located in `db/schema.js`, and generated SQL migrations are stored in `drizzle/`. Use the following workflow after changing the schema:
+The version-controlled Drizzle schema is located in `db/schema.js`, generated SQL migrations are stored in `drizzle/`, and `db/migrate.js` applies them over Neon's HTTP driver. Use the following workflow after changing the schema:
 
 ```bash
 npm run db:generate
