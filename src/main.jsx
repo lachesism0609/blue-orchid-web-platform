@@ -40,6 +40,7 @@ function App() {
   const [stockOnly, setStockOnly] = useState(false)
   const [catalogPageNumber, setCatalogPageNumber] = useState(1)
   const [selectedProduct, setSelectedProduct] = useState(null)
+  const [editingCartIndex, setEditingCartIndex] = useState(null)
   const [liked, setLiked] = useState(() => { try { return JSON.parse(localStorage.getItem('blue-orchid-favourites')) || [] } catch { return [] } })
   const [menuOpen, setMenuOpen] = useState(false)
   const [lang, setLang] = useState(() => localStorage.getItem('blue-orchid-language') || 'zh')
@@ -106,6 +107,7 @@ function App() {
   useEffect(() => { if (favouritesPage) window.history.replaceState(null, '', '#favourites') }, [favouritesPage])
   useEffect(() => { if (cartPage) window.history.replaceState(null, '', '#cart') }, [cartPage])
   useEffect(() => { if (cartPage) setAboutPage(false) }, [cartPage])
+  useEffect(() => { if (!selectedProduct) setEditingCartIndex(null) }, [selectedProduct])
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(''), 2400); return () => clearTimeout(timer) }, [toast])
   useEffect(() => {
     const status = new URLSearchParams(window.location.search).get('emailVerified')
@@ -212,8 +214,8 @@ function App() {
     const index = selectedColorIndex(product)
     return index === 0 ? product.image : variantImages[categoryOf(product)]?.[(index - 1) % variantImages[categoryOf(product)].length] || product.image
   }
-  const selectColor = (productId, index) => setSelectedColors(current => ({ ...current, [productId]: index }))
-  const addToCart = product => { if (!authUser) { setAuthError(lang === 'zh' ? '请先登录后再加入购物车。' : 'Please sign in to add items to your bag.'); setAuthOpen(true); return } if (!product.inStock) { setToast(lang === 'zh' ? '该商品暂时缺货' : 'This item is out of stock'); return } const size = selectedSizes[product.id] || product.sizes?.[0] || 'One size'; const colorIndex = selectedColorIndex(product); setCart(current => [...current, { productId: product.id, quantity: 1, size, colorIndex }]); setToast(lang === 'zh' ? '已加入购物车' : 'Added to bag') }
+  const selectColor = (productId, index) => { setSelectedColors(current => ({ ...current, [productId]: index })); if (editingCartIndex !== null) setCart(current => current.map((item, itemIndex) => itemIndex === editingCartIndex ? { ...item, colorIndex: index } : item)) }
+  const addToCart = product => { if (!authUser) { setAuthError(lang === 'zh' ? '请先登录后再加入购物车。' : 'Please sign in to add items to your bag.'); setAuthOpen(true); return } if (!product.inStock) { setToast(lang === 'zh' ? '该商品暂时缺货' : 'This item is out of stock'); return } const size = selectedSizes[product.id] || product.sizes?.[0] || 'One size'; const colorIndex = selectedColorIndex(product); if (editingCartIndex !== null) { setCart(current => current.map((item, itemIndex) => itemIndex === editingCartIndex ? { ...item, size, colorIndex } : item)); setSelectedProduct(null); setEditingCartIndex(null); setToast(lang === 'zh' ? '商品选项已更新' : 'Product options updated'); return } setCart(current => [...current, { productId: product.id, quantity: 1, size, colorIndex }]); setToast(lang === 'zh' ? '已加入购物车' : 'Added to bag') }
   const changeCartQuantity = (index, amount) => setCart(current => current.map((item, itemIndex) => { if (itemIndex !== index) return item; const product = products.find(entry => entry.id === item.productId); return { ...item, quantity: Math.max(1, Math.min(10, product?.stock || 10, item.quantity + amount)) } }))
   useEffect(() => {
     const openProductDetails = event => {
@@ -237,29 +239,28 @@ function App() {
       const button = document.createElement('button')
       button.type = 'button'; button.textContent = size
       button.className = (selectedSizes[selectedProduct.id] || selectedProduct.sizes[0]) === size ? 'selected' : ''
-      button.addEventListener('click', () => setSelectedSizes(current => ({ ...current, [selectedProduct.id]: size })))
+      button.addEventListener('click', () => { setSelectedSizes(current => ({ ...current, [selectedProduct.id]: size })); if (editingCartIndex !== null) setCart(current => current.map((item, itemIndex) => itemIndex === editingCartIndex ? { ...item, size } : item)) })
       return button
     }))
-  }, [selectedProduct, selectedSizes])
+    const action = document.querySelector('.product-detail .detail-add')
+    if (action && editingCartIndex !== null) action.textContent = lang === 'zh' ? '保存选择' : 'Save options'
+  }, [selectedProduct, selectedSizes, editingCartIndex, lang])
   useEffect(() => {
-    document.querySelectorAll('.cart-option-editor').forEach(element => element.remove())
-    document.querySelectorAll('.cart-list article').forEach((article, index) => {
+    const openCartProduct = event => {
+      const image = event.target.closest('.cart-list article img')
+      if (!image) return
+      const article = image.closest('article')
+      const index = [...article.parentElement.children].indexOf(article)
       const item = cartItems[index]
-      if (!item?.product?.sizes?.length) return
-      const editor = document.createElement('div'); editor.className = 'cart-option-editor'
-      const label = document.createElement('label'); label.textContent = lang === 'zh' ? '尺码 ' : 'Size '
-      const select = document.createElement('select')
-      item.product.sizes.forEach(size => { const option = document.createElement('option'); option.value = size; option.textContent = size; option.selected = (item.size || item.product.sizes[0]) === size; select.append(option) })
-      select.addEventListener('change', event => setCart(current => current.map((entry, itemIndex) => itemIndex === item.index ? { ...entry, size: event.target.value } : entry)))
-      label.append(select); editor.append(label)
-      const colourLabel = document.createElement('label'); colourLabel.textContent = lang === 'zh' ? '款式 ' : 'Colour '
-      const colourSelect = document.createElement('select')
-      item.product.colors.forEach((colour, colourIndex) => { const option = document.createElement('option'); option.value = String(colourIndex); option.textContent = `${lang === 'zh' ? '款式' : 'Colour'} ${colourIndex + 1}`; option.selected = Number(item.colorIndex || 0) === colourIndex; option.style.backgroundColor = colour; colourSelect.append(option) })
-      colourSelect.addEventListener('change', event => { const colorIndex = Number(event.target.value); setCart(current => current.map((entry, itemIndex) => itemIndex === item.index ? { ...entry, colorIndex } : entry)); setSelectedColors(current => ({ ...current, [item.productId]: colorIndex })) })
-      colourLabel.append(colourSelect); editor.append(colourLabel)
-      article.children[1]?.append(editor)
-    })
-  }, [cart, products, lang, cartPage, checkoutStage])
+      if (!item) return
+      setEditingCartIndex(item.index)
+      setSelectedSizes(current => ({ ...current, [item.productId]: item.size || item.product.sizes?.[0] || 'One size' }))
+      setSelectedColors(current => ({ ...current, [item.productId]: Number(item.colorIndex || 0) }))
+      setSelectedProduct(item.product)
+    }
+    document.addEventListener('click', openCartProduct)
+    return () => document.removeEventListener('click', openCartProduct)
+  }, [cartItems])
   const cartUnitPrice = product => saleDiscounts[product.id] ? Math.round(product.price * saleDiscounts[product.id]) : product.price
   const cartTotal = cartItems.reduce((sum, item) => sum + cartUnitPrice(item.product) * item.quantity, 0)
   const handleCheckout = async () => {
