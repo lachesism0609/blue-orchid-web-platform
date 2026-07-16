@@ -91,6 +91,16 @@ function App() {
   useEffect(() => { localStorage.setItem('blue-orchid-cart', JSON.stringify(cart)) }, [cart])
   useEffect(() => { if (accountPage) window.history.replaceState(null, '', '#account') }, [accountPage])
   useEffect(() => { if (catalogPage) window.history.replaceState(null, '', `#${catalogPage}`) }, [catalogPage])
+  useEffect(() => {
+    if (!catalogPage) return
+    const scroller = document.querySelector('.catalog-page')
+    const toolbar = document.querySelector('.catalog-tools')
+    if (!scroller || !toolbar) return
+    const followCatalogScroll = () => { toolbar.style.transform = `translate(-50%, ${-scroller.scrollTop}px)` }
+    followCatalogScroll()
+    scroller.addEventListener('scroll', followCatalogScroll, { passive: true })
+    return () => { scroller.removeEventListener('scroll', followCatalogScroll); toolbar.style.transform = '' }
+  }, [catalogPage])
   useEffect(() => { if (aboutPage) window.history.replaceState(null, '', '#about') }, [aboutPage])
   useEffect(() => { if (favouritesPage) window.history.replaceState(null, '', '#favourites') }, [favouritesPage])
   useEffect(() => { if (cartPage) window.history.replaceState(null, '', '#cart') }, [cartPage])
