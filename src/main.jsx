@@ -49,7 +49,7 @@ function App() {
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState('')
   const [developmentVerificationUrl, setDevelopmentVerificationUrl] = useState('')
   const [authLoading, setAuthLoading] = useState(false)
-  const [authUser, setAuthUser] = useState(() => { try { return JSON.parse(localStorage.getItem('blue-orchid-user')) } catch { return null } })
+  const [authUser, setAuthUser] = useState(null)
   const [accountPage, setAccountPage] = useState(() => window.location.hash === '#account')
   const [accountTab, setAccountTab] = useState('orders')
   const [accountData, setAccountData] = useState({ orders: [], addresses: [] })
@@ -104,12 +104,15 @@ function App() {
   }, [catalogPage, aboutPage, accountPage, favouritesPage, cartPage, authOpen])
   useEffect(() => { const timer = setInterval(() => setActiveSlide(current => (current + 1) % heroSlides.length), 5000); return () => clearInterval(timer) }, [])
   const accountRequest = async (path, options = {}) => {
-    const response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('blue-orchid-token')}`, ...options.headers } })
+    const response = await fetch(path, { ...options, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', ...options.headers } })
     if (response.status === 204) return null
     const data = await response.json()
     if (!response.ok) throw new Error(data.message || 'Request failed')
     return data
   }
+  useEffect(() => {
+    accountRequest('/api/auth/me').then(data => setAuthUser(data.user)).catch(() => setAuthUser(null))
+  }, [])
   const loadAccount = async () => {
     try { const [orders, addresses] = await Promise.all([accountRequest('/api/account/orders'), accountRequest('/api/account/addresses')]); setAccountData({ orders: orders.orders, addresses: addresses.addresses }) } catch (error) { setAccountNotice(error.message) }
   }
@@ -135,7 +138,7 @@ function App() {
     const form = new FormData(event.currentTarget)
     const body = { email: form.get('email'), password: form.get('password'), ...(authMode === 'register' ? { name: form.get('name') } : {}) }
     try {
-      const response = await fetch(`/api/auth/${authMode}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      const response = await fetch(`/api/auth/${authMode}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       const isJson = response.headers.get('content-type')?.includes('application/json')
       const data = isJson ? await response.json() : null
       if (!isJson) throw new Error(lang === 'zh' ? '认证服务尚未启动，请重启开发服务后重试。' : 'The authentication service is unavailable. Please restart the development server.')
@@ -147,7 +150,7 @@ function App() {
         setAuthMode('login')
         return
       }
-      localStorage.setItem('blue-orchid-token', data.token); localStorage.setItem('blue-orchid-user', JSON.stringify(data.user)); setAuthUser(data.user); setAuthOpen(false)
+      localStorage.removeItem('blue-orchid-token'); localStorage.removeItem('blue-orchid-user'); setAuthUser(data.user); setAuthOpen(false)
       if (cartPage) {
         const addressData = await accountRequest('/api/account/addresses')
         if (addressData.addresses.length) { setCheckoutAddresses(addressData.addresses); setSelectedAddressId(addressData.addresses[0].id); setCheckoutStage('confirm') }
@@ -166,7 +169,7 @@ function App() {
       setAuthNotice(lang === 'zh' ? '新的验证邮件已发送。' : 'A new verification email has been sent.')
     } catch (error) { setAuthError(error.message) } finally { setAuthLoading(false) }
   }
-  const logout = () => { localStorage.removeItem('blue-orchid-token'); localStorage.removeItem('blue-orchid-user'); setAuthUser(null) }
+  const logout = async () => { try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }) } finally { localStorage.removeItem('blue-orchid-token'); localStorage.removeItem('blue-orchid-user'); setAuthUser(null) } }
   const openAccount = () => { setAccountPage(true); setFavouritesPage(false); setCatalogPage(''); setAboutPage(false) }
   const closeAccount = () => { setAccountPage(false); window.history.replaceState(null, '', window.location.pathname) }
   const openCatalog = id => { setCatalogPage(id === 'about' ? '' : id); setAboutPage(id === 'about'); setAccountPage(false); setFavouritesPage(false); setMenuOpen(false) }

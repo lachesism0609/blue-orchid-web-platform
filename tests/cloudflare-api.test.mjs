@@ -3,7 +3,7 @@ import test from 'node:test'
 import { onRequest } from '../functions/api/[[path]].js'
 
 class AuthDatabase {
-  constructor() { this.users = [] }
+  constructor() { this.users = []; this.sessions = []; this.rateLimits = new Map() }
 
   prepare(sql) {
     const database = this
@@ -18,6 +18,8 @@ class AuthDatabase {
             if (sql === 'SELECT * FROM users WHERE email = ?') return database.users.find(entry => entry.email === values[0]) || null
             if (sql === 'SELECT * FROM users WHERE id = ?') return database.users.find(entry => entry.id === values[0]) || null
             if (sql === 'SELECT * FROM users WHERE verification_token_hash = ?') return database.users.find(entry => entry.verification_token_hash === values[0]) || null
+            if (sql === 'SELECT * FROM sessions WHERE token_hash = ?') return database.sessions.find(entry => entry.token_hash === values[0]) || null
+            if (sql === 'SELECT * FROM rate_limits WHERE key = ?') return database.rateLimits.get(values[0]) || null
             throw new Error(`Unexpected first query: ${sql}`)
           },
           async run() {
@@ -32,6 +34,17 @@ class AuthDatabase {
               Object.assign(user, { email_verified: 1, verification_token_hash: null, verification_expires_at: null })
             } else if (sql.startsWith('DELETE FROM users')) {
               database.users = database.users.filter(entry => entry.id !== values[0])
+            } else if (sql.startsWith('INSERT INTO sessions')) {
+              const [id, user_id, token_hash, created_at, expires_at, last_seen_at, user_agent, ip_address] = values
+              database.sessions.push({ id, user_id, token_hash, created_at, expires_at, last_seen_at, user_agent, ip_address, revoked_at: null })
+            } else if (sql.startsWith('UPDATE sessions SET last_seen_at')) {
+              const session = database.sessions.find(entry => entry.id === values[1]); session.last_seen_at = values[0]
+            } else if (sql.startsWith('UPDATE sessions SET revoked_at')) {
+              for (const session of database.sessions) if ((sql.includes('token_hash') && session.token_hash === values[1]) || (sql.includes('user_id') && session.user_id === values[1])) session.revoked_at = values[0]
+            } else if (sql.startsWith('INSERT INTO rate_limits')) {
+              database.rateLimits.set(values[0], { key: values[0], count: 1, reset_at: values[1] })
+            } else if (sql.startsWith('UPDATE rate_limits SET count')) {
+              const limit = database.rateLimits.get(values[0]); limit.count += 1
             } else throw new Error(`Unexpected run query: ${sql}`)
             return { success: true, meta: { changes: 1 } }
           }
@@ -43,15 +56,16 @@ class AuthDatabase {
 
 const env = () => ({ DB: new AuthDatabase(), AUTH_SECRET: 'test-secret-that-is-not-used-in-production', DEV_EMAIL_VERIFICATION: 'true' })
 
-function context(databaseEnv, path, { method = 'GET', body, token } = {}) {
+function context(databaseEnv, path, { method = 'GET', body, token, cookie, protocol = 'https:' } = {}) {
   return {
     env: databaseEnv,
     params: { path: path.split('/') },
-    request: new Request(`https://blue-orchid.pages.dev/api/${path}`, {
+    request: new Request(`${protocol}//blue-orchid.pages.dev/api/${path}`, {
       method,
       headers: {
         ...(body ? { 'Content-Type': 'application/json' } : {}),
-        ...(token ? { Authorization: `Bearer ${token}` } : {})
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(cookie ? { Cookie: cookie } : {})
       },
       body: body ? JSON.stringify(body) : undefined
     })
@@ -99,12 +113,37 @@ test('registers, verifies email, logs in, rejects a bad password, and validates 
   const login = await onRequest(context(databaseEnv, 'auth/login', { method: 'POST', body: { email: credentials.email, password: credentials.password } }))
   assert.equal(login.status, 200)
   const loggedIn = await login.json()
-  assert.ok(loggedIn.token)
+  assert.equal(loggedIn.token, undefined)
+  const setCookie = login.headers.get('set-cookie')
+  assert.match(setCookie, /HttpOnly/)
+  assert.match(setCookie, /Secure/)
+  assert.match(setCookie, /SameSite=Strict/)
+  const cookie = setCookie.split(';')[0]
 
   const rejected = await onRequest(context(databaseEnv, 'auth/login', { method: 'POST', body: { email: credentials.email, password: 'incorrect-password' } }))
   assert.equal(rejected.status, 401)
 
-  const currentUser = await onRequest(context(databaseEnv, 'auth/me', { token: loggedIn.token }))
+  const currentUser = await onRequest(context(databaseEnv, 'auth/me', { cookie }))
   assert.equal(currentUser.status, 200)
   assert.equal((await currentUser.json()).user.name, credentials.name)
+
+  const logout = await onRequest(context(databaseEnv, 'auth/logout', { method: 'POST', cookie }))
+  assert.equal(logout.status, 200)
+  assert.match(logout.headers.get('set-cookie'), /Max-Age=0/)
+  const revoked = await onRequest(context(databaseEnv, 'auth/me', { cookie }))
+  assert.equal(revoked.status, 401)
+})
+
+test('redirects non-local HTTP requests to HTTPS', async () => {
+  const response = await onRequest(context(env(), 'products', { protocol: 'http:' }))
+  assert.equal(response.status, 308)
+  assert.equal(response.headers.get('location'), 'https://blue-orchid.pages.dev/api/products')
+})
+
+test('rate limits repeated login attempts', async () => {
+  const databaseEnv = env()
+  let response
+  for (let index = 0; index < 11; index += 1) response = await onRequest(context(databaseEnv, 'auth/login', { method: 'POST', body: { email: 'none@example.com', password: 'bad-password' } }))
+  assert.equal(response.status, 429)
+  assert.ok(Number(response.headers.get('retry-after')) > 0)
 })

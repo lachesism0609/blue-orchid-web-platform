@@ -13,6 +13,24 @@ export const users = pgTable('users', {
   createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
 }, table => [uniqueIndex('users_email_idx').on(table.email), uniqueIndex('users_verification_token_hash_idx').on(table.verificationTokenHash)])
 
+export const sessions = pgTable('sessions', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  tokenHash: text('token_hash').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'string' }).notNull(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true, mode: 'string' }),
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+  userAgent: text('user_agent').notNull().default(''),
+  ipAddress: text('ip_address').notNull().default('')
+}, table => [uniqueIndex('sessions_token_hash_idx').on(table.tokenHash), index('sessions_user_id_idx').on(table.userId), index('sessions_expires_at_idx').on(table.expiresAt)])
+
+export const rateLimits = pgTable('rate_limits', {
+  key: text('key').primaryKey(),
+  count: integer('count').notNull().default(0),
+  resetAt: timestamp('reset_at', { withTimezone: true, mode: 'string' }).notNull()
+}, table => [index('rate_limits_reset_at_idx').on(table.resetAt)])
+
 export const addresses = pgTable('addresses', {
   id: text('id').primaryKey(),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),

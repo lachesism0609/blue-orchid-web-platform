@@ -4,6 +4,7 @@ const textEncoder = new TextEncoder()
 const sessionDuration = 60 * 60 * 24 * 7
 const verificationDuration = 60 * 60 * 24
 const passwordIterations = 100000
+const sessionCookie = '__Host-blue_orchid_session'
 
 const products = [
   { id: 1, category: 'women', name: '亚麻短袖衬衫', price: 329, colors: ['#eee3d1', '#d69391', '#a8bdcf'], image: 'https://images.unsplash.com/photo-1598032895397-b9472444bf93?auto=format&fit=crop&w=750&q=85' },
@@ -40,24 +41,33 @@ const products = [
 
 const saleDiscounts = { 1: 0.8, 2: 0.85, 3: 0.75, 9: 0.8, 10: 0.7, 11: 0.75, 12: 0.8, 13: 0.85, 16: 0.8, 18: 0.75, 25: 0.8, 28: 0.7, 29: 0.8, 30: 0.75 }
 
-function json(data, status = 200) {
+function securityHeaders(extra = {}) {
+  return {
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+    'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+    ...extra
+  }
+}
+
+function json(data, status = 200, extraHeaders = {}) {
   return new Response(data === null ? null : JSON.stringify(data), {
     status,
-    headers: {
+    headers: securityHeaders({
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'no-store',
-      'X-Content-Type-Options': 'nosniff'
-    }
+      ...extraHeaders
+    })
   })
 }
 
 function cachedJson(data, maxAge = 3600) {
   return new Response(JSON.stringify(data), {
-    headers: {
+    headers: securityHeaders({
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': `public, max-age=${maxAge}, s-maxage=${maxAge}`,
-      'X-Content-Type-Options': 'nosniff'
-    }
+    })
   })
 }
 
@@ -106,30 +116,50 @@ async function passwordMatches(password, hash, salt) {
   return difference === 0
 }
 
-async function hmacKey(secret) {
-  return crypto.subtle.importKey('raw', textEncoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'])
-}
-
-async function createToken(user, secret) {
-  const payload = textToBase64url(JSON.stringify({ sub: user.id, exp: Math.floor(Date.now() / 1000) + sessionDuration }))
-  const signature = await crypto.subtle.sign('HMAC', await hmacKey(secret), textEncoder.encode(payload))
-  return `${payload}.${bytesToBase64url(new Uint8Array(signature))}`
-}
-
-async function verifyToken(token, secret) {
-  const [payload, signature] = String(token || '').split('.')
-  if (!payload || !signature) return null
-  try {
-    const valid = await crypto.subtle.verify('HMAC', await hmacKey(secret), base64urlToBytes(signature), textEncoder.encode(payload))
-    if (!valid) return null
-    const data = JSON.parse(base64urlToText(payload))
-    return data.exp > Math.floor(Date.now() / 1000) ? data : null
-  } catch { return null }
-}
-
 async function sha256(value) {
   const digest = await crypto.subtle.digest('SHA-256', textEncoder.encode(value))
   return bytesToBase64url(new Uint8Array(digest))
+}
+
+function cookies(request) {
+  return Object.fromEntries((request.headers.get('Cookie') || '').split(';').map(part => part.trim().split(/=(.*)/s)).filter(([name]) => name))
+}
+
+function sessionToken(request) {
+  return cookies(request)[sessionCookie] || request.headers.get('Authorization')?.replace(/^Bearer\s+/i, '') || ''
+}
+
+function sessionCookieHeader(token, maxAge = sessionDuration) {
+  return `${sessionCookie}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAge}`
+}
+
+function clientIp(request) {
+  return request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For')?.split(',')[0].trim() || 'unknown'
+}
+
+async function createSession(user, request, env) {
+  const token = bytesToBase64url(crypto.getRandomValues(new Uint8Array(32)))
+  const now = new Date().toISOString()
+  const expiresAt = new Date(Date.now() + sessionDuration * 1000).toISOString()
+  await env.DB.prepare('INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at, last_seen_at, user_agent, ip_address) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(crypto.randomUUID(), user.id, await sha256(token), now, expiresAt, now, request.headers.get('User-Agent') || '', clientIp(request)).run()
+  return token
+}
+
+async function checkRateLimit(request, env, route) {
+  const rules = route === 'auth/login' ? [10, 15 * 60] : route.startsWith('auth/') ? [20, 15 * 60] : request.method === 'POST' || request.method === 'PUT' || request.method === 'DELETE' ? [60, 60] : null
+  if (!rules) return null
+  const [limit, windowSeconds] = rules
+  const key = `${route}:${await sha256(clientIp(request))}`
+  const now = Date.now()
+  const existing = await env.DB.prepare('SELECT * FROM rate_limits WHERE key = ?').bind(key).first()
+  if (!existing || timestampMilliseconds(existing.reset_at) <= now) {
+    await env.DB.prepare('INSERT INTO rate_limits (key, count, reset_at) VALUES (?, 1, ?) ON CONFLICT (key) DO UPDATE SET count = 1, reset_at = EXCLUDED.reset_at').bind(key, new Date(now + windowSeconds * 1000).toISOString()).run()
+    return null
+  }
+  if (existing.count >= limit) return json({ message: 'Too many requests. Please try again later.' }, 429, { 'Retry-After': String(Math.max(1, Math.ceil((timestampMilliseconds(existing.reset_at) - now) / 1000))) })
+  await env.DB.prepare('UPDATE rate_limits SET count = count + 1 WHERE key = ?').bind(key).run()
+  return null
 }
 
 function siteUrl(request, env) {
@@ -189,10 +219,12 @@ function publicAddress(address) {
 }
 
 async function authenticatedUser(request, env) {
-  const token = request.headers.get('Authorization')?.replace(/^Bearer\s+/i, '')
-  const payload = await verifyToken(token, env.AUTH_SECRET)
-  if (!payload) return null
-  return env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(payload.sub).first()
+  const token = sessionToken(request)
+  if (!token) return null
+  const session = await env.DB.prepare('SELECT * FROM sessions WHERE token_hash = ?').bind(await sha256(token)).first()
+  if (!session || session.revoked_at || timestampMilliseconds(session.expires_at) <= Date.now()) return null
+  await env.DB.prepare('UPDATE sessions SET last_seen_at = ? WHERE id = ?').bind(new Date().toISOString(), session.id).run()
+  return env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(session.user_id).first()
 }
 
 async function requestBody(request) {
@@ -223,8 +255,25 @@ export async function onRequest({ request, env, params }) {
   const method = request.method.toUpperCase()
   const route = (Array.isArray(params.path) ? params.path : [params.path]).filter(Boolean).join('/')
 
+  const url = new URL(request.url)
+  const forwardedProto = request.headers.get('X-Forwarded-Proto')
+  if (url.protocol !== 'https:' && url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') {
+    url.protocol = 'https:'
+    return Response.redirect(url, 308)
+  }
+  if (forwardedProto && forwardedProto !== 'https' && url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') {
+    url.protocol = 'https:'
+    return Response.redirect(url, 308)
+  }
+
   try {
     if (method === 'OPTIONS') return new Response(null, { status: 204 })
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+      const origin = request.headers.get('Origin')
+      if (origin && origin !== url.origin) return json({ message: 'Cross-origin request rejected.' }, 403)
+    }
+    const limited = await checkRateLimit(request, env, route)
+    if (limited) return limited
     if (method === 'GET' && route === 'exchange-rate') return cachedJson(await latestExchangeRate())
     if (method === 'GET' && route === 'products') return json(products)
 
@@ -276,13 +325,25 @@ export async function onRequest({ request, env, params }) {
       const user = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first()
       if (!user || !(await passwordMatches(password, user.password_hash, user.password_salt))) return json({ message: '邮箱或密码不正确。' }, 401)
       if (!user.email_verified) return json({ message: '请先完成邮箱验证后再登录。', code: 'EMAIL_NOT_VERIFIED' }, 403)
-      return json({ token: await createToken(user, env.AUTH_SECRET), user: publicUser(user) })
+      const token = await createSession(user, request, env)
+      return json({ user: publicUser(user) }, 200, { 'Set-Cookie': sessionCookieHeader(token) })
+    }
+
+    if (method === 'POST' && route === 'auth/logout') {
+      const token = sessionToken(request)
+      if (token) await env.DB.prepare('UPDATE sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL').bind(new Date().toISOString(), await sha256(token)).run()
+      return json({ message: 'Signed out.' }, 200, { 'Set-Cookie': sessionCookieHeader('', 0) })
     }
 
     const user = await authenticatedUser(request, env)
     if (!user) return json({ message: '请先登录后再继续。' }, 401)
 
     if (method === 'GET' && route === 'auth/me') return json({ user: publicUser(user) })
+
+    if (method === 'POST' && route === 'auth/revoke-sessions') {
+      await env.DB.prepare('UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL').bind(new Date().toISOString(), user.id).run()
+      return json({ message: 'All sessions revoked.' }, 200, { 'Set-Cookie': sessionCookieHeader('', 0) })
+    }
 
     if (method === 'PUT' && route === 'account/profile') {
       const body = await requestBody(request)

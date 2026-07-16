@@ -121,7 +121,9 @@ During frontend development, Vite proxies `/api` requests to `http://localhost:3
 | --- | --- | --- |
 | `GET` | `/api/products` | Retrieve the product catalogue |
 | `POST` | `/api/auth/register` | Register a customer |
-| `POST` | `/api/auth/login` | Log in a customer |
+| `POST` | `/api/auth/login` | Log in and create a secure server-side session |
+| `POST` | `/api/auth/logout` | Revoke the current session |
+| `POST` | `/api/auth/revoke-sessions` | Revoke every active session for the customer |
 | `GET` | `/api/auth/me` | Retrieve the authenticated customer |
 | `PUT` | `/api/account/profile` | Update personal information |
 | `GET` | `/api/account/addresses` | Retrieve delivery addresses |
@@ -130,11 +132,9 @@ During frontend development, Vite proxies `/api` requests to `http://localhost:3
 | `GET` | `/api/account/orders` | Retrieve order history |
 | `POST` | `/api/account/orders` | Create an order |
 
-Protected account endpoints require an authentication token in the request header:
+Protected account endpoints use an opaque session token stored in a `Secure`, `HttpOnly`, `SameSite=Strict` cookie. JavaScript cannot read the token. Sessions are stored as SHA-256 token hashes, expire after seven days, track last use, and can be revoked immediately. The API temporarily accepts bearer tokens for backwards compatibility, but the React client no longer stores credentials in `localStorage`.
 
-```http
-Authorization: Bearer <token>
-```
+Production HTTP requests are redirected to HTTPS. State-changing requests reject a mismatched `Origin`, authentication endpoints are rate limited per hashed client IP, and authenticated writes have a separate limit. Rate-limit state and session revocations are stored in the database so they remain effective across Cloudflare isolates.
 
 ## Project Structure
 
@@ -176,7 +176,7 @@ Create a Cloudflare Pages project connected to this repository with the followin
 | Build output directory | `dist` |
 | Root directory | `/` |
 
-Create a D1 database, execute `migrations/0001_initial.sql` followed by `migrations/0002_email_verification.sql`, and bind it to the Pages project using the variable name `DB`. Also create encrypted Pages secrets named `AUTH_SECRET` and `RESEND_API_KEY`, plus the `EMAIL_FROM` and `SITE_URL` variables. `EMAIL_FROM` must use a sender/domain verified in Resend; `SITE_URL` must be the public Pages origin such as `https://blue-orchid-web-platform.pages.dev`. Redeploy the project after adding or changing bindings.
+Create a D1 database, execute `migrations/0001_initial.sql`, `migrations/0002_email_verification.sql`, and `migrations/0003_secure_sessions.sql`, then bind it to the Pages project using the variable name `DB`. Also create encrypted Pages secrets named `AUTH_SECRET` and `RESEND_API_KEY`, plus the `EMAIL_FROM` and `SITE_URL` variables. `EMAIL_FROM` must use a sender/domain verified in Resend; `SITE_URL` must be the public Pages origin such as `https://blue-orchid-web-platform.pages.dev`. Redeploy the project after adding or changing bindings.
 
 New customers receive a one-time verification link that expires after 24 hours. Login is blocked until verification succeeds, and the login dialog can resend the message. For development demonstrations, `DEV_EMAIL_VERIFICATION=true` returns the verification URL in the registration response and displays a demo verification button when email delivery is not configured. Do not enable this variable for a public production store.
 
