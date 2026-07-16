@@ -151,7 +151,10 @@ function App() {
     document.addEventListener('click', openOrderDetails)
     return () => document.removeEventListener('click', openOrderDetails)
   }, [accountData.orders])
-  const toggleLike = id => setLiked(old => { if (old.includes(id)) return old.filter(x => x !== id); setToast(lang === 'zh' ? '已添加到收藏' : 'Added to favourites'); return [...old, id] })
+  const toggleLike = id => {
+    if (!authUser) { setAuthError(lang === 'zh' ? '请先登录后再收藏商品。' : 'Please sign in to save favourites.'); setAuthOpen(true); return }
+    setLiked(old => { if (old.includes(id)) return old.filter(x => x !== id); setToast(lang === 'zh' ? '已添加到收藏' : 'Added to favourites'); return [...old, id] })
+  }
   const formatPrice = value => currency === 'CNY' ? `¥${value}` : `€${(value / eurCnyRate).toFixed(2)}`
   const freeShippingThreshold = currency === 'CNY' ? '¥399' : '€50'
   const shippingText = lang === 'zh' ? `订单满 ${freeShippingThreshold} 享免费配送` : `Free shipping on orders over ${freeShippingThreshold}`
@@ -197,7 +200,7 @@ function App() {
   const closeAccount = () => { setAccountPage(false); window.history.replaceState(null, '', window.location.pathname) }
   const openCatalog = id => { setCatalogPage(id === 'about' ? '' : id); setAboutPage(id === 'about'); setAccountPage(false); setFavouritesPage(false); setMenuOpen(false) }
   const closeCatalog = () => { setCatalogPage(''); setAboutPage(false); window.history.replaceState(null, '', window.location.pathname) }
-  const openFavourites = () => { setFavouritesPage(true); setCatalogPage(''); setAboutPage(false); setAccountPage(false) }
+  const openFavourites = () => { if (!authUser) { setAuthError(lang === 'zh' ? '请先登录后查看收藏。' : 'Please sign in to view favourites.'); setAuthOpen(true); return } setFavouritesPage(true); setCatalogPage(''); setAboutPage(false); setAccountPage(false) }
   const closeFavourites = () => { setFavouritesPage(false); window.history.replaceState(null, '', window.location.pathname) }
   const closeCart = () => { setCartPage(false); setCheckoutStage('cart'); setCompletedOrder(null); window.history.replaceState(null, '', window.location.pathname) }
   const goHome = () => { closeCatalog(); closeAccount(); closeFavourites(); closeCart(); setMenuOpen(false); window.scrollTo({ top: 0, behavior: 'smooth' }) }
@@ -210,7 +213,7 @@ function App() {
     return index === 0 ? product.image : variantImages[categoryOf(product)]?.[(index - 1) % variantImages[categoryOf(product)].length] || product.image
   }
   const selectColor = (productId, index) => setSelectedColors(current => ({ ...current, [productId]: index }))
-  const addToCart = product => { if (!product.inStock) { setToast(lang === 'zh' ? '该商品暂时缺货' : 'This item is out of stock'); return } const size = selectedSizes[product.id] || product.sizes?.[0] || 'One size'; setCart(current => [...current, { productId: product.id, quantity: 1, size }]); setToast(lang === 'zh' ? '已加入购物车' : 'Added to bag') }
+  const addToCart = product => { if (!authUser) { setAuthError(lang === 'zh' ? '请先登录后再加入购物车。' : 'Please sign in to add items to your bag.'); setAuthOpen(true); return } if (!product.inStock) { setToast(lang === 'zh' ? '该商品暂时缺货' : 'This item is out of stock'); return } const size = selectedSizes[product.id] || product.sizes?.[0] || 'One size'; setCart(current => [...current, { productId: product.id, quantity: 1, size }]); setToast(lang === 'zh' ? '已加入购物车' : 'Added to bag') }
   const changeCartQuantity = (index, amount) => setCart(current => current.map((item, itemIndex) => { if (itemIndex !== index) return item; const product = products.find(entry => entry.id === item.productId); return { ...item, quantity: Math.max(1, Math.min(10, product?.stock || 10, item.quantity + amount)) } }))
   useEffect(() => {
     const openProductDetails = event => {
