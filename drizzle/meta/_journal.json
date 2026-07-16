@@ -50,6 +50,13 @@
       "when": 1784217220316,
       "tag": "0006_tan_blue_blade",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1784221146970,
+      "tag": "0007_mean_master_chief",
+      "breakpoints": true
     }
   ]
 }

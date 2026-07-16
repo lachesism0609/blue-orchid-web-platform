@@ -6,6 +6,7 @@ import {
   productCatalogue,
   selectedSku,
 } from "../functions/_lib/catalog.js";
+import { customerStoreQueries } from "../functions/_lib/customer-store.js";
 import { catalogSeed } from "../db/catalog-seed.js";
 
 class AuthDatabase {
@@ -14,6 +15,8 @@ class AuthDatabase {
     this.sessions = [];
     this.rateLimits = new Map();
     this.errors = [];
+    this.favourites = [];
+    this.cartItems = [];
     this.productRows = catalogSeed.map((product) => ({
       id: product.id,
       category: product.category,
@@ -75,6 +78,26 @@ class AuthDatabase {
               return { results: database.sizeRows };
             if (sql === catalogueQueries.skuQuery)
               return { results: database.skuRows };
+            if (sql === customerStoreQueries.favourites)
+              return {
+                results: database.favourites
+                  .filter((entry) => entry.user_id === values[0])
+                  .map((entry) => ({ product_id: entry.product_id })),
+              };
+            if (sql === customerStoreQueries.cart)
+              return {
+                results: database.cartItems
+                  .filter((entry) => entry.user_id === values[0])
+                  .map((entry) => ({
+                    ...entry,
+                    size: database.sizeRows.find(
+                      (size) => size.id === entry.size_id,
+                    )?.label,
+                    color_index: database.variantRows.find(
+                      (variant) => variant.id === entry.variant_id,
+                    )?.position,
+                  })),
+              };
             throw new Error(`Unexpected all query: ${sql}`);
           },
           async first() {
@@ -107,6 +130,41 @@ class AuthDatabase {
               );
             if (sql === "SELECT * FROM rate_limits WHERE key = ?")
               return database.rateLimits.get(values[0]) || null;
+            if (
+              sql ===
+              "SELECT id, quantity FROM cart_items WHERE user_id = ? AND variant_id = ? AND size_id = ?"
+            )
+              return (
+                database.cartItems.find(
+                  (entry) =>
+                    entry.user_id === values[0] &&
+                    entry.variant_id === values[1] &&
+                    entry.size_id === values[2],
+                ) || null
+              );
+            if (
+              sql ===
+              "SELECT id, product_id, variant_id, size_id, quantity FROM cart_items WHERE id = ? AND user_id = ?"
+            )
+              return (
+                database.cartItems.find(
+                  (entry) =>
+                    entry.id === values[0] && entry.user_id === values[1],
+                ) || null
+              );
+            if (
+              sql ===
+              "SELECT id, quantity FROM cart_items WHERE user_id = ? AND variant_id = ? AND size_id = ? AND id <> ?"
+            )
+              return (
+                database.cartItems.find(
+                  (entry) =>
+                    entry.user_id === values[0] &&
+                    entry.variant_id === values[1] &&
+                    entry.size_id === values[2] &&
+                    entry.id !== values[3],
+                ) || null
+              );
             throw new Error(`Unexpected first query: ${sql}`);
           },
           async run() {
@@ -203,12 +261,83 @@ class AuthDatabase {
                 source: values[1],
                 message: values[2],
               });
+            } else if (sql.startsWith("INSERT INTO favourites")) {
+              if (
+                !database.favourites.some(
+                  (entry) =>
+                    entry.user_id === values[0] &&
+                    entry.product_id === values[1],
+                )
+              )
+                database.favourites.push({
+                  user_id: values[0],
+                  product_id: values[1],
+                  created_at: values[2],
+                });
+            } else if (sql.startsWith("DELETE FROM favourites")) {
+              database.favourites = database.favourites.filter(
+                (entry) =>
+                  entry.user_id !== values[0] || entry.product_id !== values[1],
+              );
+            } else if (sql.startsWith("INSERT INTO cart_items")) {
+              const [
+                id,
+                user_id,
+                product_id,
+                variant_id,
+                size_id,
+                quantity,
+                created_at,
+                updated_at,
+              ] = values;
+              database.cartItems.push({
+                id,
+                user_id,
+                product_id,
+                variant_id,
+                size_id,
+                quantity,
+                created_at,
+                updated_at,
+              });
+            } else if (sql.startsWith("UPDATE cart_items SET variant_id")) {
+              const item = database.cartItems.find(
+                (entry) =>
+                  entry.id === values[4] && entry.user_id === values[5],
+              );
+              Object.assign(item, {
+                variant_id: values[0],
+                size_id: values[1],
+                quantity: values[2],
+                updated_at: values[3],
+              });
+            } else if (sql.startsWith("UPDATE cart_items SET quantity")) {
+              const item = database.cartItems.find(
+                (entry) =>
+                  entry.id === values[2] && entry.user_id === values[3],
+              );
+              item.quantity = values[0];
+              item.updated_at = values[1];
+            } else if (sql.startsWith("DELETE FROM cart_items WHERE id")) {
+              const before = database.cartItems.length;
+              database.cartItems = database.cartItems.filter(
+                (entry) =>
+                  entry.id !== values[0] || entry.user_id !== values[1],
+              );
+              return {
+                success: true,
+                meta: { changes: before - database.cartItems.length },
+              };
             } else throw new Error(`Unexpected run query: ${sql}`);
             return { success: true, meta: { changes: 1 } };
           },
         };
       },
     };
+  }
+
+  async batch(statements) {
+    return Promise.all(statements.map((statement) => statement.run()));
   }
 }
 
@@ -438,4 +567,80 @@ test("rate limits repeated login attempts", async () => {
     );
   assert.equal(response.status, 429);
   assert.ok(Number(response.headers.get("retry-after")) > 0);
+});
+
+test("persists favourites and cart selections in the customer database", async () => {
+  const databaseEnv = env();
+  const credentials = {
+    name: "Store State User",
+    email: "store-state@example.com",
+    password: "eRkaC7iT39b!4d5",
+  };
+  const registration = await onRequest(
+    context(databaseEnv, "auth/register", {
+      method: "POST",
+      body: credentials,
+    }),
+  );
+  const verificationToken = new URL(
+    (await registration.json()).verificationUrl,
+  ).searchParams.get("token");
+  await onRequest({
+    ...context(databaseEnv, "auth/verify-email"),
+    request: new Request(
+      `https://blue-orchid.pages.dev/api/auth/verify-email?token=${verificationToken}`,
+    ),
+  });
+  const login = await onRequest(
+    context(databaseEnv, "auth/login", {
+      method: "POST",
+      body: { email: credentials.email, password: credentials.password },
+    }),
+  );
+  const cookie = login.headers.get("set-cookie").split(";")[0];
+  const catalogue = await productCatalogue(databaseEnv.DB);
+  const product = catalogue[0];
+  const variant = product.variants[0];
+  const size = product.sizes[0];
+
+  const favourite = await onRequest(
+    context(databaseEnv, `account/favourites/${product.id}`, {
+      method: "PUT",
+      cookie,
+    }),
+  );
+  assert.equal(favourite.status, 200);
+  assert.deepEqual((await favourite.json()).favourites, [product.id]);
+
+  const added = await onRequest(
+    context(databaseEnv, "account/cart", {
+      method: "POST",
+      cookie,
+      body: {
+        productId: product.id,
+        variantId: variant.id,
+        size,
+        quantity: 1,
+      },
+    }),
+  );
+  assert.equal(added.status, 201);
+  const addedState = await added.json();
+  assert.equal(addedState.cart[0].variantId, variant.id);
+  assert.equal(addedState.cart[0].size, size);
+
+  const reloaded = await onRequest(
+    context(databaseEnv, "account/store-state", { cookie }),
+  );
+  assert.deepEqual(await reloaded.json(), addedState);
+
+  const updated = await onRequest(
+    context(databaseEnv, `account/cart/${addedState.cart[0].id}`, {
+      method: "PUT",
+      cookie,
+      body: { quantity: 2 },
+    }),
+  );
+  assert.equal(updated.status, 200);
+  assert.equal((await updated.json()).cart[0].quantity, 2);
 });

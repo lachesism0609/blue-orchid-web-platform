@@ -122,13 +122,7 @@ export default function App() {
   const [catalogPageNumber, setCatalogPageNumber] = useState(1);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [editingCartIndex, setEditingCartIndex] = useState(null);
-  const [liked, setLiked] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem("blue-orchid-favourites")) || [];
-    } catch {
-      return [];
-    }
-  });
+  const [liked, setLiked] = useState([]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [lang, setLang] = useState(
     () => localStorage.getItem("blue-orchid-language") || "zh",
@@ -174,13 +168,7 @@ export default function App() {
   const [toast, setToast] = useState("");
   const [selectedColors, setSelectedColors] = useState({});
   const [selectedSizes, setSelectedSizes] = useState({});
-  const [cart, setCart] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem("blue-orchid-cart")) || [];
-    } catch {
-      return [];
-    }
-  });
+  const [cart, setCart] = useState([]);
   const [cartPage, setCartPage] = useState(
     () => window.location.hash === "#cart",
   );
@@ -252,11 +240,9 @@ export default function App() {
     localStorage.setItem("blue-orchid-currency", currency);
   }, [currency]);
   useEffect(() => {
-    localStorage.setItem("blue-orchid-favourites", JSON.stringify(liked));
-  }, [liked]);
-  useEffect(() => {
-    localStorage.setItem("blue-orchid-cart", JSON.stringify(cart));
-  }, [cart]);
+    localStorage.removeItem("blue-orchid-favourites");
+    localStorage.removeItem("blue-orchid-cart");
+  }, []);
   useEffect(() => {
     if (accountPage) window.history.replaceState(null, "", "#account");
   }, [accountPage]);
@@ -355,6 +341,26 @@ export default function App() {
       .then((data) => setAuthUser(data.user))
       .catch(() => setAuthUser(null));
   }, []);
+  useEffect(() => {
+    if (!authUser) {
+      setLiked([]);
+      setCart([]);
+      return;
+    }
+    let cancelled = false;
+    accountRequest("/api/account/store-state")
+      .then((data) => {
+        if (cancelled) return;
+        setLiked(data.favourites || []);
+        setCart(data.cart || []);
+      })
+      .catch((error) => {
+        if (!cancelled) setToast(error.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authUser?.id]);
   const loadAccount = async () => {
     try {
       const [orders, addresses] = await Promise.all([
@@ -369,7 +375,7 @@ export default function App() {
   useEffect(() => {
     if (accountPage && authUser) loadAccount();
   }, [accountPage]);
-  const toggleLike = (id) => {
+  const toggleLike = async (id) => {
     if (!authUser) {
       setAuthError(
         lang === "zh"
@@ -379,11 +385,18 @@ export default function App() {
       setAuthOpen(true);
       return;
     }
-    setLiked((old) => {
-      if (old.includes(id)) return old.filter((x) => x !== id);
-      setToast(lang === "zh" ? "已添加到收藏" : "Added to favourites");
-      return [...old, id];
-    });
+    const adding = !liked.includes(id);
+    try {
+      const data = await accountRequest(`/api/account/favourites/${id}`, {
+        method: adding ? "PUT" : "DELETE",
+      });
+      setLiked(data.favourites || []);
+      setCart(data.cart || []);
+      if (adding)
+        setToast(lang === "zh" ? "已添加到收藏" : "Added to favourites");
+    } catch (error) {
+      setToast(error.message);
+    }
   };
   const formatPrice = (value) =>
     currency === "CNY" ? `¥${value}` : `€${(value / eurCnyRate).toFixed(2)}`;
@@ -576,16 +589,8 @@ export default function App() {
   };
   const selectColor = (productId, index) => {
     setSelectedColors((current) => ({ ...current, [productId]: index }));
-    if (editingCartIndex !== null)
-      setCart((current) =>
-        current.map((item, itemIndex) =>
-          itemIndex === editingCartIndex
-            ? { ...item, colorIndex: index }
-            : item,
-        ),
-      );
   };
-  const addToCart = (product) => {
+  const addToCart = async (product) => {
     if (!authUser) {
       setAuthError(
         lang === "zh"
@@ -609,40 +614,68 @@ export default function App() {
       );
       return;
     }
-    if (editingCartIndex !== null) {
-      setCart((current) =>
-        current.map((item, itemIndex) =>
-          itemIndex === editingCartIndex ? { ...item, size, colorIndex } : item,
-        ),
+    try {
+      const editingItem =
+        editingCartIndex === null ? null : cart[editingCartIndex];
+      const data = await accountRequest(
+        editingItem
+          ? `/api/account/cart/${editingItem.id}`
+          : "/api/account/cart",
+        {
+          method: editingItem ? "PUT" : "POST",
+          body: JSON.stringify({
+            productId: product.id,
+            variantId: product.variants?.[colorIndex]?.id,
+            size,
+            quantity: editingItem?.quantity || 1,
+          }),
+        },
       );
-      setSelectedProduct(null);
-      setEditingCartIndex(null);
-      setToast(lang === "zh" ? "商品选项已更新" : "Product options updated");
-      return;
+      setCart(data.cart || []);
+      setLiked(data.favourites || liked);
+      if (editingItem) {
+        setSelectedProduct(null);
+        setEditingCartIndex(null);
+        setToast(lang === "zh" ? "商品选项已更新" : "Product options updated");
+      } else setToast(lang === "zh" ? "已加入购物车" : "Added to bag");
+    } catch (error) {
+      setToast(error.message);
     }
-    setCart((current) => [
-      ...current,
-      { productId: product.id, quantity: 1, size, colorIndex },
-    ]);
-    setToast(lang === "zh" ? "已加入购物车" : "Added to bag");
   };
-  const changeCartQuantity = (index, amount) =>
-    setCart((current) =>
-      current.map((item, itemIndex) => {
-        if (itemIndex !== index) return item;
-        const product = products.find((entry) => entry.id === item.productId);
-        const available = product
-          ? variantStock(product, item.colorIndex, item.size)
-          : 0;
-        return {
-          ...item,
-          quantity: Math.max(
-            1,
-            Math.min(10, available, item.quantity + amount),
-          ),
-        };
-      }),
+  const changeCartQuantity = async (index, amount) => {
+    const item = cart[index];
+    if (!item) return;
+    const product = products.find((entry) => entry.id === item.productId);
+    const available = product
+      ? variantStock(product, item.colorIndex, item.size)
+      : 0;
+    const quantity = Math.max(
+      1,
+      Math.min(10, available, item.quantity + amount),
     );
+    if (quantity === item.quantity) return;
+    try {
+      const data = await accountRequest(`/api/account/cart/${item.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ quantity }),
+      });
+      setCart(data.cart || []);
+    } catch (error) {
+      setToast(error.message);
+    }
+  };
+  const removeCartItem = async (index) => {
+    const item = cart[index];
+    if (!item) return;
+    try {
+      const data = await accountRequest(`/api/account/cart/${item.id}`, {
+        method: "DELETE",
+      });
+      setCart(data.cart || []);
+    } catch (error) {
+      setToast(error.message);
+    }
+  };
   const cartItems = cart
     .map((item, index) => ({
       ...item,
@@ -705,13 +738,6 @@ export default function App() {
         method: "POST",
         body: JSON.stringify({
           addressId: selectedAddressId,
-          items: cartItems.map((item) => ({
-            productId: item.productId,
-            variantId:
-              item.product.variants?.[Number(item.colorIndex || 0)]?.id,
-            quantity: item.quantity,
-            size: item.size || item.product.sizes?.[0] || "One size",
-          })),
         }),
       });
       setCompletedOrder(data.order);
@@ -917,12 +943,6 @@ export default function App() {
             ...current,
             [selectedProduct.id]: size,
           }));
-          if (editingCartIndex !== null)
-            setCart((current) =>
-              current.map((item, itemIndex) =>
-                itemIndex === editingCartIndex ? { ...item, size } : item,
-              ),
-            );
         }}
         onAction={() => addToCart(selectedProduct)}
       />
@@ -948,11 +968,7 @@ export default function App() {
         onBack={() => setCheckoutStage("cart")}
         onEdit={editCartItem}
         onQuantity={changeCartQuantity}
-        onRemove={(index) =>
-          setCart((current) =>
-            current.filter((_, itemIndex) => itemIndex !== index),
-          )
-        }
+        onRemove={removeCartItem}
         onCheckout={handleCheckout}
         onHome={goHome}
       />

@@ -9,16 +9,12 @@ const sql = neon(process.env.DATABASE_URL)
 let inventory = new Map()
 try {
   const rows = await sql`SELECT product_id, stock FROM product_inventory`
-  inventory = new Map(rows.map(row => [Number(row.product_id), Number(row.stock)]))
+  inventory = new Map(rows.map((row) => [Number(row.product_id), Number(row.stock)]))
 } catch {
   // A new database may not contain the compatibility inventory table.
 }
 
-const queries = [
-  sql`DELETE FROM product_skus WHERE product_id BETWEEN 1 AND 30`,
-  sql`DELETE FROM product_sizes WHERE product_id BETWEEN 1 AND 30`,
-  sql`DELETE FROM product_variants WHERE product_id BETWEEN 1 AND 30`
-]
+const queries = []
 
 for (const product of catalogSeed) {
   queries.push(sql`
@@ -34,12 +30,15 @@ for (const product of catalogSeed) {
     queries.push(sql`
       INSERT INTO product_variants (id, product_id, code, name_zh, name_en, color_hex, image_url, position)
       VALUES (${variant.id}, ${product.id}, ${variant.code}, ${variant.nameZh}, ${variant.nameEn}, ${variant.colorHex}, ${variant.imageUrl}, ${variant.position})
+      ON CONFLICT (id) DO UPDATE SET product_id = EXCLUDED.product_id, code = EXCLUDED.code, name_zh = EXCLUDED.name_zh,
+        name_en = EXCLUDED.name_en, color_hex = EXCLUDED.color_hex, image_url = EXCLUDED.image_url, position = EXCLUDED.position
     `)
   }
   for (const size of product.sizeOptions) {
     queries.push(sql`
       INSERT INTO product_sizes (id, product_id, label, position)
       VALUES (${size.id}, ${product.id}, ${size.label}, ${size.position})
+      ON CONFLICT (id) DO UPDATE SET product_id = EXCLUDED.product_id, label = EXCLUDED.label, position = EXCLUDED.position
     `)
   }
 
@@ -55,6 +54,8 @@ for (const product of catalogSeed) {
       queries.push(sql`
         INSERT INTO product_skus (id, product_id, variant_id, size_id, sku, stock, updated_at)
         VALUES (${skuId}, ${product.id}, ${variant.id}, ${size.id}, ${sku}, ${stock}, now())
+        ON CONFLICT (id) DO UPDATE SET product_id = EXCLUDED.product_id, variant_id = EXCLUDED.variant_id,
+          size_id = EXCLUDED.size_id, sku = EXCLUDED.sku, stock = EXCLUDED.stock, updated_at = now()
       `)
     }
   }

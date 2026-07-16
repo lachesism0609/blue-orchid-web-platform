@@ -1,5 +1,6 @@
 import { createDatabase } from '../_lib/database.js'
 import { productCatalogue, selectedSku } from '../_lib/catalog.js'
+import { customerStoreState } from '../_lib/customer-store.js'
 
 const textEncoder = new TextEncoder()
 const sessionDuration = 60 * 60 * 24 * 7
@@ -13,7 +14,7 @@ function securityHeaders(extra = {}) {
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
     'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
-    ...extra
+    ...extra,
   }
 }
 
@@ -23,8 +24,8 @@ function json(data, status = 200, extraHeaders = {}) {
     headers: securityHeaders({
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'no-store',
-      ...extraHeaders
-    })
+      ...extraHeaders,
+    }),
   })
 }
 
@@ -33,17 +34,25 @@ function cachedJson(data, maxAge = 3600) {
     headers: securityHeaders({
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': `public, max-age=${maxAge}, s-maxage=${maxAge}`,
-    })
+    }),
   })
 }
 
 async function latestExchangeRate() {
-  const response = await fetch('https://api.frankfurter.dev/v2/rate/EUR/CNY', { headers: { Accept: 'application/json' } })
+  const response = await fetch('https://api.frankfurter.dev/v2/rate/EUR/CNY', {
+    headers: { Accept: 'application/json' },
+  })
   if (!response.ok) throw new Error(`Exchange-rate provider returned ${response.status}`)
   const data = await response.json()
   const rate = Number(data.rate)
   if (!Number.isFinite(rate) || rate <= 0) throw new Error('Exchange-rate provider returned an invalid rate')
-  return { base: 'EUR', quote: 'CNY', rate, date: data.date, source: 'Frankfurter' }
+  return {
+    base: 'EUR',
+    quote: 'CNY',
+    rate,
+    date: data.date,
+    source: 'Frankfurter',
+  }
 }
 
 function bytesToBase64url(bytes) {
@@ -59,7 +68,7 @@ function textToBase64url(value) {
 function base64urlToBytes(value) {
   const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
   const binary = atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '='))
-  return Uint8Array.from(binary, character => character.charCodeAt(0))
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0))
 }
 
 function base64urlToText(value) {
@@ -69,7 +78,10 @@ function base64urlToText(value) {
 async function passwordHash(password, salt = crypto.getRandomValues(new Uint8Array(16))) {
   const key = await crypto.subtle.importKey('raw', textEncoder.encode(password), 'PBKDF2', false, ['deriveBits'])
   const derived = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: passwordIterations }, key, 256)
-  return { hash: bytesToBase64url(new Uint8Array(derived)), salt: bytesToBase64url(salt) }
+  return {
+    hash: bytesToBase64url(new Uint8Array(derived)),
+    salt: bytesToBase64url(salt),
+  }
 }
 
 async function passwordMatches(password, hash, salt) {
@@ -88,7 +100,12 @@ async function sha256(value) {
 }
 
 function cookies(request) {
-  return Object.fromEntries((request.headers.get('Cookie') || '').split(';').map(part => part.trim().split(/=(.*)/s)).filter(([name]) => name))
+  return Object.fromEntries(
+    (request.headers.get('Cookie') || '')
+      .split(';')
+      .map((part) => part.trim().split(/=(.*)/s))
+      .filter(([name]) => name),
+  )
 }
 
 function sessionToken(request) {
@@ -108,7 +125,8 @@ async function createSession(user, request, env) {
   const now = new Date().toISOString()
   const expiresAt = new Date(Date.now() + sessionDuration * 1000).toISOString()
   await env.DB.prepare('INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at, last_seen_at, user_agent, ip_address) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .bind(crypto.randomUUID(), user.id, await sha256(token), now, expiresAt, now, request.headers.get('User-Agent') || '', clientIp(request)).run()
+    .bind(crypto.randomUUID(), user.id, await sha256(token), now, expiresAt, now, request.headers.get('User-Agent') || '', clientIp(request))
+    .run()
   return token
 }
 
@@ -120,10 +138,15 @@ async function checkRateLimit(request, env, route) {
   const now = Date.now()
   const existing = await env.DB.prepare('SELECT * FROM rate_limits WHERE key = ?').bind(key).first()
   if (!existing || timestampMilliseconds(existing.reset_at) <= now) {
-    await env.DB.prepare('INSERT INTO rate_limits (key, count, reset_at) VALUES (?, 1, ?) ON CONFLICT (key) DO UPDATE SET count = 1, reset_at = EXCLUDED.reset_at').bind(key, new Date(now + windowSeconds * 1000).toISOString()).run()
+    await env.DB.prepare('INSERT INTO rate_limits (key, count, reset_at) VALUES (?, 1, ?) ON CONFLICT (key) DO UPDATE SET count = 1, reset_at = EXCLUDED.reset_at')
+      .bind(key, new Date(now + windowSeconds * 1000).toISOString())
+      .run()
     return null
   }
-  if (existing.count >= limit) return json({ message: 'Too many requests. Please try again later.' }, 429, { 'Retry-After': String(Math.max(1, Math.ceil((timestampMilliseconds(existing.reset_at) - now) / 1000))) })
+  if (existing.count >= limit)
+    return json({ message: 'Too many requests. Please try again later.' }, 429, {
+      'Retry-After': String(Math.max(1, Math.ceil((timestampMilliseconds(existing.reset_at) - now) / 1000))),
+    })
   await env.DB.prepare('UPDATE rate_limits SET count = count + 1 WHERE key = ?').bind(key).run()
   return null
 }
@@ -133,8 +156,11 @@ async function recordError(env, request, error, source = 'backend') {
     const message = String(error?.message || error || 'Unknown error').slice(0, 1000)
     const stack = String(error?.stack || '').slice(0, 6000)
     await env.DB.prepare('INSERT INTO error_events (id, source, message, stack, url, user_agent, ip_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .bind(crypto.randomUUID(), source, message, stack, String(request.url).slice(0, 2000), String(request.headers.get('User-Agent') || '').slice(0, 500), await sha256(clientIp(request)), new Date().toISOString()).run()
-  } catch (monitoringError) { console.error('Error monitoring failed', monitoringError) }
+      .bind(crypto.randomUUID(), source, message, stack, String(request.url).slice(0, 2000), String(request.headers.get('User-Agent') || '').slice(0, 500), await sha256(clientIp(request)), new Date().toISOString())
+      .run()
+  } catch (monitoringError) {
+    console.error('Error monitoring failed', monitoringError)
+  }
 }
 
 function siteUrl(request, env) {
@@ -143,12 +169,14 @@ function siteUrl(request, env) {
 
 function timestampMilliseconds(value) {
   if (value instanceof Date) return value.getTime()
-  const normalized = String(value || '').replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00')
+  const normalized = String(value || '')
+    .replace(' ', 'T')
+    .replace(/([+-]\d{2})$/, '$1:00')
   return Date.parse(normalized)
 }
 
 function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character])
+  return String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character])
 }
 
 async function issueVerification(user, request, env) {
@@ -163,8 +191,16 @@ async function issueVerification(user, request, env) {
   }
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
-    headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: env.EMAIL_FROM, to: [user.email], subject: 'Verify your Blue Orchid account', html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;padding:32px;color:#202020"><h1 style="color:#294887">Blue Orchid</h1><p>Hello ${escapeHtml(user.name)},</p><p>Confirm your email address to finish creating your account.</p><p><a href="${verificationUrl}" style="display:inline-block;padding:12px 22px;background:#294887;color:white;text-decoration:none">Verify email</a></p><p>This link expires in 24 hours. If you did not create this account, you can ignore this email.</p></div>` })
+    headers: {
+      Authorization: `Bearer ${env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: env.EMAIL_FROM,
+      to: [user.email],
+      subject: 'Verify your Blue Orchid account',
+      html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;padding:32px;color:#202020"><h1 style="color:#294887">Blue Orchid</h1><p>Hello ${escapeHtml(user.name)},</p><p>Confirm your email address to finish creating your account.</p><p><a href="${verificationUrl}" style="display:inline-block;padding:12px 22px;background:#294887;color:white;text-decoration:none">Verify email</a></p><p>This link expires in 24 hours. If you did not create this account, you can ignore this email.</p></div>`,
+    }),
   })
   if (!response.ok) throw new Error(`Email delivery failed (${response.status})`)
   return {}
@@ -173,11 +209,26 @@ async function issueVerification(user, request, env) {
 function verificationPage(success, origin) {
   const title = success ? 'Email verified' : 'Verification link invalid'
   const message = success ? 'Your email has been verified. You can now sign in.' : 'This verification link is invalid or has expired. Please request a new one.'
-  return new Response(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${title}</title></head><body style="margin:0;background:#f7f7f4;font-family:Arial,sans-serif;color:#202020"><main style="max-width:520px;margin:12vh auto;background:white;padding:48px;text-align:center"><h1 style="color:#294887">Blue Orchid</h1><h2>${title}</h2><p style="line-height:1.6">${message}</p><a href="${origin}/?emailVerified=${success ? '1' : '0'}" style="display:inline-block;margin-top:16px;padding:12px 24px;background:#202020;color:white;text-decoration:none">Return to store</a></main></body></html>`, { status: success ? 200 : 400, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } })
+  return new Response(
+    `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${title}</title></head><body style="margin:0;background:#f7f7f4;font-family:Arial,sans-serif;color:#202020"><main style="max-width:520px;margin:12vh auto;background:white;padding:48px;text-align:center"><h1 style="color:#294887">Blue Orchid</h1><h2>${title}</h2><p style="line-height:1.6">${message}</p><a href="${origin}/?emailVerified=${success ? '1' : '0'}" style="display:inline-block;margin-top:16px;padding:12px 24px;background:#202020;color:white;text-decoration:none">Return to store</a></main></body></html>`,
+    {
+      status: success ? 200 : 400,
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+      },
+    },
+  )
 }
 
 function publicUser(user) {
-  return { id: user.id, name: user.name, email: user.email, phone: user.phone || '', createdAt: user.created_at }
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    phone: user.phone || '',
+    createdAt: user.created_at,
+  }
 }
 
 function publicAddress(address) {
@@ -189,35 +240,53 @@ function publicAddress(address) {
     city: address.city,
     postcode: address.postcode,
     country: address.country,
-    createdAt: address.created_at
+    createdAt: address.created_at,
   }
 }
 
 async function authenticatedUser(request, env) {
   const token = sessionToken(request)
   if (!token) return null
-  const session = await env.DB.prepare('SELECT * FROM sessions WHERE token_hash = ?').bind(await sha256(token)).first()
+  const session = await env.DB.prepare('SELECT * FROM sessions WHERE token_hash = ?')
+    .bind(await sha256(token))
+    .first()
   if (!session || session.revoked_at || timestampMilliseconds(session.expires_at) <= Date.now()) return null
   await env.DB.prepare('UPDATE sessions SET last_seen_at = ? WHERE id = ?').bind(new Date().toISOString(), session.id).run()
   return env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(session.user_id).first()
 }
 
 async function requestBody(request) {
-  try { return await request.json() } catch { return {} }
+  try {
+    return await request.json()
+  } catch {
+    return {}
+  }
 }
 
 async function listOrders(env, userId) {
   const { results: orders } = await env.DB.prepare('SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC').bind(userId).all()
   if (!orders.length) return []
   const placeholders = orders.map(() => '?').join(', ')
-  const { results: items } = await env.DB.prepare(`SELECT * FROM order_items WHERE order_id IN (${placeholders}) ORDER BY id`).bind(...orders.map(order => order.id)).all()
-  return orders.map(order => ({
+  const { results: items } = await env.DB.prepare(`SELECT * FROM order_items WHERE order_id IN (${placeholders}) ORDER BY id`)
+    .bind(...orders.map((order) => order.id))
+    .all()
+  return orders.map((order) => ({
     id: order.id,
     total: order.total,
     status: order.status,
     address: typeof order.address_json === 'string' ? JSON.parse(order.address_json) : order.address_json,
     createdAt: order.created_at,
-    items: items.filter(item => item.order_id === order.id).map(item => ({ productId: item.product_id, name: item.name, quantity: item.quantity, size: item.size || 'One size', variantId: item.variant_id, variantName: item.variant_name || 'Default', unitPrice: item.unit_price }))
+    items: items
+      .filter((item) => item.order_id === order.id)
+      .map((item) => ({
+        productId: item.product_id,
+        name: item.name,
+        quantity: item.quantity,
+        size: item.size || 'One size',
+        variantId: item.variant_id,
+        variantName: item.variant_name || 'Default',
+        unitPrice: item.unit_price,
+      })),
   }))
 }
 
@@ -252,7 +321,15 @@ export async function onRequest({ request, env, params }) {
     if (method === 'GET' && route === 'exchange-rate') return cachedJson(await latestExchangeRate())
     if (method === 'POST' && route === 'errors/report') {
       const body = await requestBody(request)
-      await recordError(env, request, { message: String(body.message || 'Client error'), stack: String(body.stack || '') }, 'frontend')
+      await recordError(
+        env,
+        request,
+        {
+          message: String(body.message || 'Client error'),
+          stack: String(body.stack || ''),
+        },
+        'frontend',
+      )
       return new Response(null, { status: 204 })
     }
     if (method === 'GET' && route === 'products') {
@@ -265,7 +342,15 @@ export async function onRequest({ request, env, params }) {
       const maxPrice = url.searchParams.has('maxPrice') ? Number(url.searchParams.get('maxPrice')) : null
       const requestedPage = Math.max(1, Number(url.searchParams.get('page')) || 1)
       const limit = Math.max(1, Math.min(24, Number(url.searchParams.get('limit')) || 12))
-      let filtered = catalogue.filter(product => (!query || `${product.nameZh} ${product.nameEn}`.toLowerCase().includes(query)) && (!category || product.category === category) && (!sale || product.salePrice !== null) && (!inStock || product.inStock) && (minPrice === null || !Number.isFinite(minPrice) || product.price >= minPrice) && (maxPrice === null || !Number.isFinite(maxPrice) || product.price <= maxPrice))
+      let filtered = catalogue.filter(
+        (product) =>
+          (!query || `${product.nameZh} ${product.nameEn}`.toLowerCase().includes(query)) &&
+          (!category || product.category === category) &&
+          (!sale || product.salePrice !== null) &&
+          (!inStock || product.inStock) &&
+          (minPrice === null || !Number.isFinite(minPrice) || product.price >= minPrice) &&
+          (maxPrice === null || !Number.isFinite(maxPrice) || product.price <= maxPrice),
+      )
       const total = filtered.length
       const pages = Math.max(1, Math.ceil(total / limit))
       const page = Math.min(requestedPage, pages)
@@ -275,14 +360,16 @@ export async function onRequest({ request, env, params }) {
 
     const productMatch = route.match(/^products\/(\d+)$/)
     if (method === 'GET' && productMatch) {
-      const product = (await productCatalogue(env.DB)).find(entry => entry.id === Number(productMatch[1]))
+      const product = (await productCatalogue(env.DB)).find((entry) => entry.id === Number(productMatch[1]))
       return product ? json(product) : json({ message: 'Product not found.' }, 404)
     }
 
     if (method === 'POST' && route === 'auth/register') {
       const body = await requestBody(request)
       const name = String(body.name || '').trim()
-      const email = String(body.email || '').trim().toLowerCase()
+      const email = String(body.email || '')
+        .trim()
+        .toLowerCase()
       const password = String(body.password || '')
       if (name.length < 2 || name.length > 50) return json({ message: '姓名长度须为 2 至 50 个字符。' }, 400)
       if (!/^\S+@\S+\.\S+$/.test(email)) return json({ message: '请输入有效的邮箱地址。' }, 400)
@@ -293,11 +380,19 @@ export async function onRequest({ request, env, params }) {
       const createdAt = new Date().toISOString()
       const passwordData = await passwordHash(password)
       await env.DB.prepare('INSERT INTO users (id, name, email, phone, password_hash, password_salt, email_verified, created_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?)')
-        .bind(id, name, email, '', passwordData.hash, passwordData.salt, createdAt).run()
+        .bind(id, name, email, '', passwordData.hash, passwordData.salt, createdAt)
+        .run()
       const user = { id, name, email, phone: '', created_at: createdAt }
       try {
         const delivery = await issueVerification(user, request, env)
-        return json({ message: '注册成功，请查收验证邮件。', requiresVerification: true, ...delivery }, 201)
+        return json(
+          {
+            message: '注册成功，请查收验证邮件。',
+            requiresVerification: true,
+            ...delivery,
+          },
+          201,
+        )
       } catch (error) {
         await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id).run()
         throw error
@@ -306,7 +401,11 @@ export async function onRequest({ request, env, params }) {
 
     if (method === 'GET' && route === 'auth/verify-email') {
       const token = new URL(request.url).searchParams.get('token') || ''
-      const user = token ? await env.DB.prepare('SELECT * FROM users WHERE verification_token_hash = ?').bind(await sha256(token)).first() : null
+      const user = token
+        ? await env.DB.prepare('SELECT * FROM users WHERE verification_token_hash = ?')
+            .bind(await sha256(token))
+            .first()
+        : null
       const valid = Boolean(user && user.verification_expires_at && timestampMilliseconds(user.verification_expires_at) > Date.now())
       if (valid) await env.DB.prepare('UPDATE users SET email_verified = 1, verification_token_hash = NULL, verification_expires_at = NULL WHERE id = ?').bind(user.id).run()
       return verificationPage(valid, siteUrl(request, env))
@@ -314,27 +413,41 @@ export async function onRequest({ request, env, params }) {
 
     if (method === 'POST' && route === 'auth/resend-verification') {
       const body = await requestBody(request)
-      const email = String(body.email || '').trim().toLowerCase()
+      const email = String(body.email || '')
+        .trim()
+        .toLowerCase()
       const user = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first()
       const delivery = user && !user.email_verified ? await issueVerification(user, request, env) : {}
-      return json({ message: '如果该邮箱尚未验证，我们已发送新的验证邮件。', ...delivery })
+      return json({
+        message: '如果该邮箱尚未验证，我们已发送新的验证邮件。',
+        ...delivery,
+      })
     }
 
     if (method === 'POST' && route === 'auth/login') {
       const body = await requestBody(request)
-      const email = String(body.email || '').trim().toLowerCase()
+      const email = String(body.email || '')
+        .trim()
+        .toLowerCase()
       const password = String(body.password || '')
       const user = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first()
       if (!user || !(await passwordMatches(password, user.password_hash, user.password_salt))) return json({ message: '邮箱或密码不正确。' }, 401)
       if (!user.email_verified) return json({ message: '请先完成邮箱验证后再登录。', code: 'EMAIL_NOT_VERIFIED' }, 403)
       const token = await createSession(user, request, env)
-      return json({ user: publicUser(user) }, 200, { 'Set-Cookie': sessionCookieHeader(token) })
+      return json({ user: publicUser(user) }, 200, {
+        'Set-Cookie': sessionCookieHeader(token),
+      })
     }
 
     if (method === 'POST' && route === 'auth/logout') {
       const token = sessionToken(request)
-      if (token) await env.DB.prepare('UPDATE sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL').bind(new Date().toISOString(), await sha256(token)).run()
-      return json({ message: 'Signed out.' }, 200, { 'Set-Cookie': sessionCookieHeader('', 0) })
+      if (token)
+        await env.DB.prepare('UPDATE sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL')
+          .bind(new Date().toISOString(), await sha256(token))
+          .run()
+      return json({ message: 'Signed out.' }, 200, {
+        'Set-Cookie': sessionCookieHeader('', 0),
+      })
     }
 
     const user = await authenticatedUser(request, env)
@@ -344,7 +457,9 @@ export async function onRequest({ request, env, params }) {
 
     if (method === 'POST' && route === 'auth/revoke-sessions') {
       await env.DB.prepare('UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL').bind(new Date().toISOString(), user.id).run()
-      return json({ message: 'All sessions revoked.' }, 200, { 'Set-Cookie': sessionCookieHeader('', 0) })
+      return json({ message: 'All sessions revoked.' }, 200, {
+        'Set-Cookie': sessionCookieHeader('', 0),
+      })
     }
 
     if (method === 'PUT' && route === 'account/profile') {
@@ -365,11 +480,16 @@ export async function onRequest({ request, env, params }) {
     if (route === 'account/addresses' && method === 'POST') {
       const body = await requestBody(request)
       const fields = ['recipient', 'phone', 'line1', 'city', 'postcode', 'country']
-      const address = Object.fromEntries(fields.map(field => [field, String(body[field] || '').trim()]))
-      if (fields.some(field => !address[field])) return json({ message: '请填写所有地址字段。' }, 400)
-      const entry = { id: crypto.randomUUID(), ...address, createdAt: new Date().toISOString() }
+      const address = Object.fromEntries(fields.map((field) => [field, String(body[field] || '').trim()]))
+      if (fields.some((field) => !address[field])) return json({ message: '请填写所有地址字段。' }, 400)
+      const entry = {
+        id: crypto.randomUUID(),
+        ...address,
+        createdAt: new Date().toISOString(),
+      }
       await env.DB.prepare('INSERT INTO addresses (id, user_id, recipient, phone, line1, city, postcode, country, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-        .bind(entry.id, user.id, entry.recipient, entry.phone, entry.line1, entry.city, entry.postcode, entry.country, entry.createdAt).run()
+        .bind(entry.id, user.id, entry.recipient, entry.phone, entry.line1, entry.city, entry.postcode, entry.country, entry.createdAt)
+        .run()
       return json({ address: entry }, 201)
     }
 
@@ -380,29 +500,171 @@ export async function onRequest({ request, env, params }) {
       return new Response(null, { status: 204 })
     }
 
+    if (route === 'account/store-state' && method === 'GET') return json(await customerStoreState(env.DB, user.id))
+
+    const favouriteMatch = route.match(/^account\/favourites\/(\d+)$/)
+    if (favouriteMatch && method === 'PUT') {
+      const productId = Number(favouriteMatch[1])
+      const catalogue = await productCatalogue(env.DB)
+      if (!catalogue.some((product) => product.id === productId)) return json({ message: 'Product not found.' }, 404)
+      await env.DB.prepare('INSERT INTO favourites (user_id, product_id, created_at) VALUES (?, ?, ?) ON CONFLICT (user_id, product_id) DO NOTHING').bind(user.id, productId, new Date().toISOString()).run()
+      return json(await customerStoreState(env.DB, user.id))
+    }
+
+    if (favouriteMatch && method === 'DELETE') {
+      await env.DB.prepare('DELETE FROM favourites WHERE user_id = ? AND product_id = ?').bind(user.id, Number(favouriteMatch[1])).run()
+      return json(await customerStoreState(env.DB, user.id))
+    }
+
+    if (route === 'account/cart' && method === 'POST') {
+      const body = await requestBody(request)
+      const catalogue = await productCatalogue(env.DB)
+      const product = catalogue.find((entry) => entry.id === Number(body.productId))
+      if (!product) return json({ message: 'Product not found.' }, 404)
+      const quantity = Number(body.quantity)
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10) return json({ message: 'Quantity must be between 1 and 10.' }, 400)
+      const selection = selectedSku(product, Number(body.variantId), String(body.size || ''))
+      if (selection.error)
+        return json(
+          {
+            message: 'The selected style or size is not available.',
+            code: selection.error,
+          },
+          400,
+        )
+      const existing = await env.DB.prepare('SELECT id, quantity FROM cart_items WHERE user_id = ? AND variant_id = ? AND size_id = ?').bind(user.id, selection.variant.id, selection.sku.sizeId).first()
+      const desiredQuantity = Number(existing?.quantity || 0) + quantity
+      if (desiredQuantity > Math.min(10, selection.sku.stock))
+        return json(
+          {
+            message: `${product.name} has only ${selection.sku.stock} item(s) available in this style and size.`,
+            code: 'INSUFFICIENT_STOCK',
+            available: selection.sku.stock,
+          },
+          409,
+        )
+      const now = new Date().toISOString()
+      if (existing) {
+        await env.DB.prepare('UPDATE cart_items SET quantity = ?, updated_at = ? WHERE id = ? AND user_id = ?').bind(desiredQuantity, now, existing.id, user.id).run()
+      } else {
+        await env.DB.prepare('INSERT INTO cart_items (id, user_id, product_id, variant_id, size_id, quantity, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+          .bind(crypto.randomUUID(), user.id, product.id, selection.variant.id, selection.sku.sizeId, quantity, now, now)
+          .run()
+      }
+      return json(await customerStoreState(env.DB, user.id), 201)
+    }
+
+    const cartMatch = route.match(/^account\/cart\/([^/]+)$/)
+    if (cartMatch && method === 'PUT') {
+      const body = await requestBody(request)
+      const current = await env.DB.prepare('SELECT id, product_id, variant_id, size_id, quantity FROM cart_items WHERE id = ? AND user_id = ?').bind(cartMatch[1], user.id).first()
+      if (!current) return json({ message: 'Cart item not found.' }, 404)
+      const catalogue = await productCatalogue(env.DB)
+      const product = catalogue.find((entry) => entry.id === Number(current.product_id))
+      if (!product) return json({ message: 'Product not found.' }, 404)
+      const quantity = Number(body.quantity ?? current.quantity)
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10) return json({ message: 'Quantity must be between 1 and 10.' }, 400)
+      const currentVariant = product.variants.find((entry) => entry.id === Number(current.variant_id))
+      const currentSize = product.skus.find((entry) => entry.sizeId === Number(current.size_id))?.size
+      const selection = selectedSku(product, Number(body.variantId ?? currentVariant?.id), String(body.size ?? currentSize ?? ''))
+      if (selection.error)
+        return json(
+          {
+            message: 'The selected style or size is not available.',
+            code: selection.error,
+          },
+          400,
+        )
+      const duplicate = await env.DB.prepare('SELECT id, quantity FROM cart_items WHERE user_id = ? AND variant_id = ? AND size_id = ? AND id <> ?').bind(user.id, selection.variant.id, selection.sku.sizeId, current.id).first()
+      const desiredQuantity = quantity + Number(duplicate?.quantity || 0)
+      if (desiredQuantity > Math.min(10, selection.sku.stock))
+        return json(
+          {
+            message: `${product.name} has only ${selection.sku.stock} item(s) available in this style and size.`,
+            code: 'INSUFFICIENT_STOCK',
+            available: selection.sku.stock,
+          },
+          409,
+        )
+      const now = new Date().toISOString()
+      if (duplicate) {
+        await env.DB.batch([
+          env.DB.prepare('UPDATE cart_items SET quantity = ?, updated_at = ? WHERE id = ? AND user_id = ?').bind(desiredQuantity, now, duplicate.id, user.id),
+          env.DB.prepare('DELETE FROM cart_items WHERE id = ? AND user_id = ?').bind(current.id, user.id),
+        ])
+      } else {
+        await env.DB.prepare('UPDATE cart_items SET variant_id = ?, size_id = ?, quantity = ?, updated_at = ? WHERE id = ? AND user_id = ?').bind(selection.variant.id, selection.sku.sizeId, quantity, now, current.id, user.id).run()
+      }
+      return json(await customerStoreState(env.DB, user.id))
+    }
+
+    if (cartMatch && method === 'DELETE') {
+      const result = await env.DB.prepare('DELETE FROM cart_items WHERE id = ? AND user_id = ?').bind(cartMatch[1], user.id).run()
+      if (!result.meta.changes) return json({ message: 'Cart item not found.' }, 404)
+      return json(await customerStoreState(env.DB, user.id))
+    }
+
     if (route === 'account/orders' && method === 'GET') return json({ orders: await listOrders(env, user.id) })
 
     if (route === 'account/orders' && method === 'POST') {
       const body = await requestBody(request)
-      const requestedItems = Array.isArray(body.items) ? body.items : []
+      const requestedItems = (await customerStoreState(env.DB, user.id)).cart
       if (!requestedItems.length) return json({ message: '购物车为空。' }, 400)
-      const addressRow = await env.DB.prepare('SELECT * FROM addresses WHERE id = ? AND user_id = ?').bind(String(body.addressId || ''), user.id).first()
+      const addressRow = await env.DB.prepare('SELECT * FROM addresses WHERE id = ? AND user_id = ?')
+        .bind(String(body.addressId || ''), user.id)
+        .first()
       if (!addressRow) return json({ message: '请选择有效的收货地址。' }, 400)
 
       const catalogue = await productCatalogue(env.DB)
       const orderItems = []
       for (const item of requestedItems) {
-        const product = catalogue.find(entry => entry.id === Number(item.productId))
+        const product = catalogue.find((entry) => entry.id === Number(item.productId))
         if (!product) return json({ message: '商品不存在。' }, 400)
         const quantity = Math.max(1, Math.min(10, Number(item.quantity) || 1))
         const size = String(item.size || product.sizes[0])
         const variantId = Number(item.variantId || product.variants[0]?.id)
         const selection = selectedSku(product, variantId, size)
-        if (selection.error === 'INVALID_VARIANT') return json({ message: `${product.name} is not available in the selected style.`, code: 'INVALID_VARIANT', productId: product.id }, 400)
-        if (selection.error) return json({ message: `${product.name} is not available in size ${size}.`, code: 'INVALID_SIZE', productId: product.id }, 400)
-        if (selection.sku.stock < quantity) return json({ message: `${product.name} has only ${selection.sku.stock} item(s) available in this style and size.`, code: 'INSUFFICIENT_STOCK', productId: product.id, variantId: selection.variant.id, size, available: selection.sku.stock }, 409)
+        if (selection.error === 'INVALID_VARIANT')
+          return json(
+            {
+              message: `${product.name} is not available in the selected style.`,
+              code: 'INVALID_VARIANT',
+              productId: product.id,
+            },
+            400,
+          )
+        if (selection.error)
+          return json(
+            {
+              message: `${product.name} is not available in size ${size}.`,
+              code: 'INVALID_SIZE',
+              productId: product.id,
+            },
+            400,
+          )
+        if (selection.sku.stock < quantity)
+          return json(
+            {
+              message: `${product.name} has only ${selection.sku.stock} item(s) available in this style and size.`,
+              code: 'INSUFFICIENT_STOCK',
+              productId: product.id,
+              variantId: selection.variant.id,
+              size,
+              available: selection.sku.stock,
+            },
+            409,
+          )
         const unitPrice = product.salePrice ?? product.price
-        orderItems.push({ productId: product.id, name: product.name, quantity, size, variantId: selection.variant.id, variantName: selection.variant.nameZh, skuId: selection.sku.id, unitPrice })
+        orderItems.push({
+          productId: product.id,
+          name: product.name,
+          quantity,
+          size,
+          variantId: selection.variant.id,
+          variantName: selection.variant.nameZh,
+          skuId: selection.sku.id,
+          unitPrice,
+        })
       }
       const total = orderItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)
       const address = publicAddress(addressRow)
@@ -412,18 +674,27 @@ export async function onRequest({ request, env, params }) {
         total,
         status: '订单已确认',
         address,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
       }
       const statements = [
-        ...orderItems.map(item => env.DB.prepare('UPDATE product_skus SET stock = stock - ?, updated_at = ? WHERE id = ? AND stock >= ?')
-          .bind(item.quantity, order.createdAt, item.skuId, item.quantity)),
-        env.DB.prepare('INSERT INTO orders (id, user_id, total, status, address_json, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-          .bind(order.id, user.id, order.total, order.status, JSON.stringify(order.address), order.createdAt),
-        ...orderItems.map(item => env.DB.prepare('INSERT INTO order_items (order_id, product_id, name, quantity, size, variant_id, variant_name, unit_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-          .bind(order.id, item.productId, item.name, item.quantity, item.size, item.variantId, item.variantName, item.unitPrice))
+        ...orderItems.map((item) => env.DB.prepare('UPDATE product_skus SET stock = stock - ?, updated_at = ? WHERE id = ? AND stock >= ?').bind(item.quantity, order.createdAt, item.skuId, item.quantity)),
+        env.DB.prepare('INSERT INTO orders (id, user_id, total, status, address_json, created_at) VALUES (?, ?, ?, ?, ?, ?)').bind(order.id, user.id, order.total, order.status, JSON.stringify(order.address), order.createdAt),
+        ...orderItems.map((item) =>
+          env.DB.prepare('INSERT INTO order_items (order_id, product_id, name, quantity, size, variant_id, variant_name, unit_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(
+            order.id,
+            item.productId,
+            item.name,
+            item.quantity,
+            item.size,
+            item.variantId,
+            item.variantName,
+            item.unitPrice,
+          ),
+        ),
+        env.DB.prepare('DELETE FROM cart_items WHERE user_id = ?').bind(user.id),
       ]
       await env.DB.batch(statements)
-      return json({ order }, 201)
+      return json({ order, cart: [] }, 201)
     }
 
     return json({ message: '未找到该接口。' }, 404)
