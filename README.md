@@ -182,17 +182,38 @@ New customers receive a one-time verification link that expires after 24 hours. 
 
 The original Express server remains available for local development through `npm run dev`. Local Express data and production Cloudflare D1 data are independent and are not synchronized automatically.
 
+### Managed PostgreSQL and migrations
+
+The application supports managed PostgreSQL through Neon's serverless HTTP driver. When `DATABASE_URL` is configured, Pages Functions use PostgreSQL; when it is absent, the existing D1 binding remains available as a transition fallback.
+
+The version-controlled Drizzle schema is located in `db/schema.js`, and generated SQL migrations are stored in `drizzle/`. Use the following workflow after changing the schema:
+
+```bash
+npm run db:generate
+npm run db:check
+DATABASE_URL="postgresql://..." npm run db:migrate
+```
+
+For PowerShell:
+
+```powershell
+$env:DATABASE_URL="postgresql://..."
+npm run db:migrate
+```
+
+Never commit `DATABASE_URL`. Store it as an encrypted Cloudflare Pages secret. Apply migrations before deploying application code that depends on a schema change. The initial PostgreSQL migration creates customers, verification tokens, addresses, orders, order items, foreign keys, indexes, and cascade rules.
+
 ## Current Limitations
 
 - No real payment gateway is connected; confirming a purchase only creates a simulated order.
-- The local Express server still uses JSON storage and is not designed for a live multi-user service; Cloudflare deployments use D1 instead.
+- The local Express server still uses JSON storage and is intended only for development. Cloudflare deployments can use managed PostgreSQL, with D1 retained only as a migration fallback.
 - There is no administration dashboard, inventory management, delivery tracking, refund workflow, or coupon system.
 - EUR prices use the latest EUR/CNY reference rate supplied by Frankfurter and cached for one hour. The last successful rate is retained locally as a network-failure fallback.
 - Customer service email addresses, telephone numbers, and opening hours shown in the application are sample information.
 
 ## Suggested Next Steps
 
-- Introduce PostgreSQL, MySQL, or MongoDB with a managed schema and migration process
+- Add automated database backups, migration checks in CI, and recovery drills
 - Use HTTPS, secure cookies, request rate limiting, and stronger session revocation controls
 - Add product details, search, filtering, pagination, and inventory validation
 - Integrate payment, fulfilment, transactional order emails, and order status workflows

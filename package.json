@@ -9,15 +9,22 @@
     "server": "node server/index.js",
     "build": "vite build",
     "preview": "vite preview",
-    "test:cloudflare": "node --test tests/cloudflare-api.test.mjs"
+    "test:cloudflare": "node --test tests/cloudflare-api.test.mjs",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:check": "drizzle-kit check"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
+    "drizzle-orm": "^0.45.2",
     "express": "^4.21.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
+    "dotenv": "^17.4.2",
+    "drizzle-kit": "^0.31.10",
     "vite": "^6.0.5"
   }
 }

@@ -1,3 +1,5 @@
+import { createDatabase } from '../_lib/database.js'
+
 const textEncoder = new TextEncoder()
 const sessionDuration = 60 * 60 * 24 * 7
 const verificationDuration = 60 * 60 * 24
@@ -200,14 +202,16 @@ async function listOrders(env, userId) {
     id: order.id,
     total: order.total,
     status: order.status,
-    address: JSON.parse(order.address_json),
+    address: typeof order.address_json === 'string' ? JSON.parse(order.address_json) : order.address_json,
     createdAt: order.created_at,
     items: items.filter(item => item.order_id === order.id).map(item => ({ productId: item.product_id, name: item.name, quantity: item.quantity, unitPrice: item.unit_price }))
   }))
 }
 
 export async function onRequest({ request, env, params }) {
-  if (!env.DB) return json({ message: 'Cloudflare D1 数据库尚未绑定。' }, 503)
+  const database = createDatabase(env)
+  if (!database) return json({ message: '数据库尚未配置。' }, 503)
+  env = { ...env, DB: database }
   if (!env.AUTH_SECRET) return json({ message: 'Cloudflare AUTH_SECRET 尚未配置。' }, 503)
 
   const method = request.method.toUpperCase()
