@@ -212,15 +212,17 @@ function App() {
   const addToCart = product => { if (!product.inStock) { setToast(lang === 'zh' ? '该商品暂时缺货' : 'This item is out of stock'); return } setCart(current => [...current, { productId: product.id, quantity: 1 }]); setToast(lang === 'zh' ? '已加入购物车' : 'Added to bag') }
   const changeCartQuantity = (index, amount) => setCart(current => current.map((item, itemIndex) => { if (itemIndex !== index) return item; const product = products.find(entry => entry.id === item.productId); return { ...item, quantity: Math.max(1, Math.min(10, product?.stock || 10, item.quantity + amount)) } }))
   useEffect(() => {
-    const addFromCatalogTitle = event => {
-      const title = event.target.closest('.catalog-grid .card h3')
+    const openProductDetails = event => {
+      const card = event.target.closest('.card')
+      if (!card || event.target.closest('button')) return
+      const title = card.querySelector('h3')
       if (!title) return
-      const productId = Object.keys(productNames).find(id => productNames[id].includes(title.textContent))
+      const productId = Object.keys(productNames).find(id => productNames[id].some(name => title.textContent.includes(name)))
       const product = products.find(item => item.id === Number(productId))
       if (product) setSelectedProduct(product)
     }
-    document.addEventListener('click', addFromCatalogTitle)
-    return () => document.removeEventListener('click', addFromCatalogTitle)
+    document.addEventListener('click', openProductDetails)
+    return () => document.removeEventListener('click', openProductDetails)
   }, [products, lang])
   const cartItems = cart.map((item, index) => ({ ...item, index, product: products.find(product => product.id === item.productId) })).filter(item => item.product)
   const cartUnitPrice = product => saleDiscounts[product.id] ? Math.round(product.price * saleDiscounts[product.id]) : product.price

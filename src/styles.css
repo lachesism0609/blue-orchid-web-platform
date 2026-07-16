@@ -29,3 +29,5 @@ nav button{font-size:14px;white-space:nowrap;padding:0}nav button:hover,.section
 /* Keep catalogue controls below the collection heading before they scroll away. */
 .catalog-tools{top:290px}
 @media(max-width:700px){.catalog-tools{top:230px}}
+
+.card .product-image,.card h3{cursor:pointer}.product-detail dd{line-height:1.6}.product-detail dl>div:nth-child(2) dd{color:#26478e;font-weight:600;word-spacing:7px}.product-detail .swatches::before{content:'Colour / 款式';display:block;width:100%;margin-bottom:12px;color:#777;font-size:11px}.product-detail .swatches{display:flex;flex-wrap:wrap;gap:12px}.product-detail .swatches button{width:18px;height:18px}
