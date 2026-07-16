@@ -136,6 +136,12 @@ function siteUrl(request, env) {
   return String(env.SITE_URL || new URL(request.url).origin).replace(/\/$/, '')
 }
 
+function timestampMilliseconds(value) {
+  if (value instanceof Date) return value.getTime()
+  const normalized = String(value || '').replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00')
+  return Date.parse(normalized)
+}
+
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character])
 }
@@ -250,7 +256,7 @@ export async function onRequest({ request, env, params }) {
     if (method === 'GET' && route === 'auth/verify-email') {
       const token = new URL(request.url).searchParams.get('token') || ''
       const user = token ? await env.DB.prepare('SELECT * FROM users WHERE verification_token_hash = ?').bind(await sha256(token)).first() : null
-      const valid = Boolean(user && user.verification_expires_at && new Date(user.verification_expires_at).getTime() > Date.now())
+      const valid = Boolean(user && user.verification_expires_at && timestampMilliseconds(user.verification_expires_at) > Date.now())
       if (valid) await env.DB.prepare('UPDATE users SET email_verified = 1, verification_token_hash = NULL, verification_expires_at = NULL WHERE id = ?').bind(user.id).run()
       return verificationPage(valid, siteUrl(request, env))
     }
