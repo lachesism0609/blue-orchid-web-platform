@@ -13,6 +13,8 @@
     "test:frontend": "node --test tests/frontend-store.test.mjs",
     "test:backend": "node --test tests/cloudflare-api.test.mjs",
     "test:cloudflare": "npm run test:backend",
+    "format": "prettier --write \"src/**/*.{js,jsx}\" tests",
+    "format:check": "prettier --check \"src/**/*.{js,jsx}\" tests",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:check": "drizzle-kit check"
@@ -28,6 +30,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.31.10",
+    "prettier": "^3.9.5",
     "vite": "^6.0.5"
   }
 }
