@@ -37,6 +37,17 @@ export const productInventory = pgTable('product_inventory', {
   updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
 }, table => [index('product_inventory_stock_idx').on(table.stock)])
 
+export const errorEvents = pgTable('error_events', {
+  id: text('id').primaryKey(),
+  source: text('source').notNull(),
+  message: text('message').notNull(),
+  stack: text('stack').notNull().default(''),
+  url: text('url').notNull().default(''),
+  userAgent: text('user_agent').notNull().default(''),
+  ipHash: text('ip_hash').notNull().default(''),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
+}, table => [index('error_events_created_at_idx').on(table.createdAt), index('error_events_source_idx').on(table.source)])
+
 export const addresses = pgTable('addresses', {
   id: text('id').primaryKey(),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import './styles.css'
+import { filterProducts, paginateProducts } from './store-utils.js'
 
 const copy = {
   zh: { shipping: '订单满 ¥399 享免费配送', language: '简体中文', search: '搜索', nav: ['新品', '女装', '男装', '配饰', '特惠', '关于我们'], collection: '2026 夏季系列', title: <>轻盈夏日<br/>自在有型</>, intro: <>轻松舒适的日常单品，<br/>为每一个自在时刻而生。</>, shop: '立即选购', categories: ['女装', '男装', '包袋', '鞋履', '配饰', '特惠'], popular: '人气精选', all: '查看全部　→', favourite: '收藏', services: [['免费配送', '订单满 ¥399'], ['轻松退换', '30 天无忧退换'], ['安心支付', '加密安全结账'], ['客户支持', '随时为您服务']] },
@@ -76,6 +77,14 @@ function App() {
   const [checkoutLoading, setCheckoutLoading] = useState(false)
   const t = copy[lang]
   useEffect(() => { fetch('/api/products').then(r => r.json()).then(setProducts).catch(() => {}) }, [])
+  useEffect(() => {
+    const report = payload => fetch('/api/errors/report', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), keepalive: true }).catch(() => {})
+    const onError = event => report({ message: event.message || 'Window error', stack: event.error?.stack || '', url: window.location.href })
+    const onRejection = event => report({ message: String(event.reason?.message || event.reason || 'Unhandled promise rejection'), stack: event.reason?.stack || '', url: window.location.href })
+    window.addEventListener('error', onError)
+    window.addEventListener('unhandledrejection', onRejection)
+    return () => { window.removeEventListener('error', onError); window.removeEventListener('unhandledrejection', onRejection) }
+  }, [])
   useEffect(() => {
     fetch('/api/exchange-rate').then(response => {
       if (!response.ok) throw new Error('Exchange rate unavailable')
@@ -285,17 +294,10 @@ function App() {
       setTimeout(async () => { await loadAccount(); setCartPage(false); setCheckoutStage('cart'); setAccountTab('orders'); setAccountPage(true); window.history.replaceState(null, '', '#account') }, 1800)
     } catch (error) { setToast(error.message) } finally { setCheckoutLoading(false) }
   }
-  const categoryProducts = catalogPage === 'new' ? products : catalogPage === 'sale' ? products.filter(product => saleDiscounts[product.id]) : products.filter(product => categoryOf(product) === catalogPage)
-  const filteredCatalogProducts = categoryProducts.filter(product => {
-    const name = productNames[product.id]?.[lang === 'zh' ? 0 : 1] || product.name
-    const matchesSearch = !productSearch || name.toLowerCase().includes(productSearch.toLowerCase())
-    const matchesPrice = priceFilter === 'all' || (priceFilter === 'under300' ? product.price < 300 : priceFilter === '300to600' ? product.price >= 300 && product.price <= 600 : product.price > 600)
-    return matchesSearch && matchesPrice && (!stockOnly || product.inStock)
-  })
+  const filteredCatalogProducts = filterProducts(products.map(product => ({ ...product, displayName: productNames[product.id]?.[lang === 'zh' ? 0 : 1] || product.name })), { category: catalogPage, query: productSearch, price: priceFilter, stockOnly, saleIds: Object.keys(saleDiscounts) })
   const catalogPageSize = 8
-  const catalogPages = Math.max(1, Math.ceil(filteredCatalogProducts.length / catalogPageSize))
-  const visibleCatalogPage = Math.min(catalogPageNumber, catalogPages)
-  const catalogProducts = filteredCatalogProducts.slice((visibleCatalogPage - 1) * catalogPageSize, visibleCatalogPage * catalogPageSize)
+  const catalogPagination = paginateProducts(filteredCatalogProducts, catalogPageNumber, catalogPageSize)
+  const { items: catalogProducts, page: visibleCatalogPage, pages: catalogPages } = catalogPagination
   useEffect(() => { setCatalogPageNumber(1) }, [catalogPage, productSearch, priceFilter, stockOnly])
   const salePrice = product => Math.round(product.price * (saleDiscounts[product.id] || 0.8))
   const saleLabel = product => lang === 'zh' ? `${(saleDiscounts[product.id] || 0.8) * 10}折` : `${Math.round((1 - (saleDiscounts[product.id] || 0.8)) * 100)}% OFF`

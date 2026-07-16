@@ -204,6 +204,14 @@ npm run db:migrate
 
 Never commit `DATABASE_URL`. Store it as an encrypted Cloudflare Pages secret. Apply migrations before deploying application code that depends on a schema change. The PostgreSQL migrations create customers, verification tokens, sessions, rate limits, product inventory, addresses, orders, order items, foreign keys, indexes, and cascade rules. Order creation validates requested quantities against current inventory and deducts stock in the same database batch as the order.
 
+## Automated quality and deployment
+
+`npm test` runs the frontend catalogue/cart logic suite and the Cloudflare API integration suite. GitHub Actions also runs the Drizzle schema check and production build for every pull request and production-branch push. Successful pushes deploy the verified `dist` artifact to Cloudflare Pages.
+
+Configure repository or production-environment secrets named `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` before enabling the deploy job. The token should be scoped to the `blue-orchid-web-platform` Pages project.
+
+Frontend runtime errors and unhandled promise rejections are reported to `/api/errors/report`. Backend exceptions are captured by the same monitoring store. Events are saved in the managed `error_events` table with truncated diagnostic data, a hashed client IP, source, URL, user agent, and timestamp; raw IP addresses and credentials are not recorded.
+
 ## Current Limitations
 
 - No real payment gateway is connected; confirming a purchase only creates a simulated order.

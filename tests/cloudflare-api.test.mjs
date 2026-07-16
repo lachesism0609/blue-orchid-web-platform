@@ -3,7 +3,7 @@ import test from 'node:test'
 import { onRequest } from '../functions/api/[[path]].js'
 
 class AuthDatabase {
-  constructor() { this.users = []; this.sessions = []; this.rateLimits = new Map(); this.inventory = Array.from({ length: 30 }, (_, index) => ({ product_id: index + 1, stock: index === 4 ? 0 : 10 })) }
+  constructor() { this.users = []; this.sessions = []; this.rateLimits = new Map(); this.errors = []; this.inventory = Array.from({ length: 30 }, (_, index) => ({ product_id: index + 1, stock: index === 4 ? 0 : 10 })) }
 
   prepare(sql) {
     const database = this
@@ -49,6 +49,8 @@ class AuthDatabase {
               database.rateLimits.set(values[0], { key: values[0], count: 1, reset_at: values[1] })
             } else if (sql.startsWith('UPDATE rate_limits SET count')) {
               const limit = database.rateLimits.get(values[0]); limit.count += 1
+            } else if (sql.startsWith('INSERT INTO error_events')) {
+              database.errors.push({ id: values[0], source: values[1], message: values[2] })
             } else throw new Error(`Unexpected run query: ${sql}`)
             return { success: true, meta: { changes: 1 } }
           }
@@ -108,6 +110,15 @@ test('returns the latest EUR/CNY reference rate', async () => {
     assert.deepEqual(await response.json(), { base: 'EUR', quote: 'CNY', rate: 8.25, date: '2026-07-16', source: 'Frankfurter' })
     assert.match(response.headers.get('cache-control'), /max-age=3600/)
   } finally { globalThis.fetch = originalFetch }
+})
+
+test('records sanitized frontend error reports', async () => {
+  const databaseEnv = env()
+  const response = await onRequest(context(databaseEnv, 'errors/report', { method: 'POST', body: { message: 'Render failed', stack: 'component stack' } }))
+  assert.equal(response.status, 204)
+  assert.equal(databaseEnv.DB.errors.length, 1)
+  assert.equal(databaseEnv.DB.errors[0].source, 'frontend')
+  assert.equal(databaseEnv.DB.errors[0].message, 'Render failed')
 })
 
 test('registers, verifies email, logs in, rejects a bad password, and validates the token', async () => {

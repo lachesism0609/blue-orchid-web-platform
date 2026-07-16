@@ -180,6 +180,15 @@ async function checkRateLimit(request, env, route) {
   return null
 }
 
+async function recordError(env, request, error, source = 'backend') {
+  try {
+    const message = String(error?.message || error || 'Unknown error').slice(0, 1000)
+    const stack = String(error?.stack || '').slice(0, 6000)
+    await env.DB.prepare('INSERT INTO error_events (id, source, message, stack, url, user_agent, ip_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(crypto.randomUUID(), source, message, stack, String(request.url).slice(0, 2000), String(request.headers.get('User-Agent') || '').slice(0, 500), await sha256(clientIp(request)), new Date().toISOString()).run()
+  } catch (monitoringError) { console.error('Error monitoring failed', monitoringError) }
+}
+
 function siteUrl(request, env) {
   return String(env.SITE_URL || new URL(request.url).origin).replace(/\/$/, '')
 }
@@ -293,6 +302,11 @@ export async function onRequest({ request, env, params }) {
     const limited = await checkRateLimit(request, env, route)
     if (limited) return limited
     if (method === 'GET' && route === 'exchange-rate') return cachedJson(await latestExchangeRate())
+    if (method === 'POST' && route === 'errors/report') {
+      const body = await requestBody(request)
+      await recordError(env, request, { message: String(body.message || 'Client error'), stack: String(body.stack || '') }, 'frontend')
+      return new Response(null, { status: 204 })
+    }
     if (method === 'GET' && route === 'products') {
       const catalogue = await productCatalogue(env)
       const query = url.searchParams.get('q')?.trim().toLowerCase() || ''
@@ -466,6 +480,7 @@ export async function onRequest({ request, env, params }) {
     return json({ message: '未找到该接口。' }, 404)
   } catch (error) {
     console.error(error)
+    await recordError(env, request, error)
     return json({ message: '服务器暂时无法处理请求，请稍后再试。' }, 500)
   }
 }
