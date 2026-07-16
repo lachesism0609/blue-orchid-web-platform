@@ -127,7 +127,8 @@ function App() {
   }, [accountData.orders])
   const toggleLike = id => setLiked(old => { if (old.includes(id)) return old.filter(x => x !== id); setToast(lang === 'zh' ? '已添加到收藏' : 'Added to favourites'); return [...old, id] })
   const formatPrice = value => currency === 'CNY' ? `¥${value}` : `€${(value / eurCnyRate).toFixed(2)}`
-  const shippingText = lang === 'zh' ? `订单满 ${formatPrice(399)} 享免费配送` : `Free shipping on orders over ${formatPrice(399)}`
+  const freeShippingThreshold = currency === 'CNY' ? '¥399' : '€50'
+  const shippingText = lang === 'zh' ? `订单满 ${freeShippingThreshold} 享免费配送` : `Free shipping on orders over ${freeShippingThreshold}`
   const openAuth = () => { if (authUser && cartPage) { handleCheckout(); return }; setAuthError(''); setAuthOpen(true) }
   const submitAuth = async event => {
     event.preventDefault(); setAuthError(''); setAuthNotice(''); setAuthLoading(true)
