@@ -40,6 +40,24 @@ const products = [
 ]
 
 const saleDiscounts = { 1: 0.8, 2: 0.85, 3: 0.75, 9: 0.8, 10: 0.7, 11: 0.75, 12: 0.8, 13: 0.85, 16: 0.8, 18: 0.75, 25: 0.8, 28: 0.7, 29: 0.8, 30: 0.75 }
+const productDetails = {
+  women: { description: 'An effortless wardrobe piece designed for comfort, movement and everyday versatility.', materials: 'Premium cotton and linen blend', sizes: ['XS', 'S', 'M', 'L'] },
+  men: { description: 'A refined everyday essential with a relaxed fit and clean, enduring construction.', materials: 'Responsibly sourced cotton blend', sizes: ['S', 'M', 'L', 'XL'] },
+  bags: { description: 'A practical, carefully proportioned bag with considered storage for daily essentials.', materials: 'Premium textile and responsibly sourced leather', sizes: ['One size'] },
+  shoes: { description: 'Comfort-led footwear with a lightweight profile, supportive sole and timeless finish.', materials: 'Leather and recycled rubber', sizes: ['36', '37', '38', '39', '40', '41'] },
+  accessories: { description: 'A considered finishing touch created to complement an understated wardrobe.', materials: 'Mixed premium materials', sizes: ['One size'] }
+}
+
+function detailedProduct(product, stock = 0) {
+  const details = productDetails[product.category] || productDetails.accessories
+  return { ...product, ...details, stock: Number(stock), inStock: Number(stock) > 0, salePrice: saleDiscounts[product.id] ? Math.round(product.price * saleDiscounts[product.id]) : null }
+}
+
+async function productCatalogue(env) {
+  const { results } = await env.DB.prepare('SELECT product_id, stock FROM product_inventory').bind().all()
+  const inventory = new Map(results.map(row => [Number(row.product_id), Number(row.stock)]))
+  return products.map(product => detailedProduct(product, inventory.get(product.id) || 0))
+}
 
 function securityHeaders(extra = {}) {
   return {
@@ -275,7 +293,29 @@ export async function onRequest({ request, env, params }) {
     const limited = await checkRateLimit(request, env, route)
     if (limited) return limited
     if (method === 'GET' && route === 'exchange-rate') return cachedJson(await latestExchangeRate())
-    if (method === 'GET' && route === 'products') return json(products)
+    if (method === 'GET' && route === 'products') {
+      const catalogue = await productCatalogue(env)
+      const query = url.searchParams.get('q')?.trim().toLowerCase() || ''
+      const category = url.searchParams.get('category') || ''
+      const sale = url.searchParams.get('sale') === 'true'
+      const inStock = url.searchParams.get('inStock') === 'true'
+      const minPrice = url.searchParams.has('minPrice') ? Number(url.searchParams.get('minPrice')) : null
+      const maxPrice = url.searchParams.has('maxPrice') ? Number(url.searchParams.get('maxPrice')) : null
+      const requestedPage = Math.max(1, Number(url.searchParams.get('page')) || 1)
+      const limit = Math.max(1, Math.min(24, Number(url.searchParams.get('limit')) || 12))
+      let filtered = catalogue.filter(product => (!query || product.name.toLowerCase().includes(query)) && (!category || product.category === category) && (!sale || product.salePrice !== null) && (!inStock || product.inStock) && (minPrice === null || !Number.isFinite(minPrice) || product.price >= minPrice) && (maxPrice === null || !Number.isFinite(maxPrice) || product.price <= maxPrice))
+      const total = filtered.length
+      const pages = Math.max(1, Math.ceil(total / limit))
+      const page = Math.min(requestedPage, pages)
+      const items = filtered.slice((page - 1) * limit, page * limit)
+      return url.search ? json({ items, pagination: { page, limit, total, pages } }) : json(catalogue)
+    }
+
+    const productMatch = route.match(/^products\/(\d+)$/)
+    if (method === 'GET' && productMatch) {
+      const product = (await productCatalogue(env)).find(entry => entry.id === Number(productMatch[1]))
+      return product ? json(product) : json({ message: 'Product not found.' }, 404)
+    }
 
     if (method === 'POST' && route === 'auth/register') {
       const body = await requestBody(request)
@@ -392,6 +432,8 @@ export async function onRequest({ request, env, params }) {
         const product = products.find(entry => entry.id === Number(item.productId))
         if (!product) return json({ message: '商品不存在。' }, 400)
         const quantity = Math.max(1, Math.min(10, Number(item.quantity) || 1))
+        const inventory = await env.DB.prepare('SELECT stock FROM product_inventory WHERE product_id = ?').bind(product.id).first()
+        if (!inventory || Number(inventory.stock) < quantity) return json({ message: `${product.name} has only ${Number(inventory?.stock || 0)} item(s) available.`, code: 'INSUFFICIENT_STOCK', productId: product.id, available: Number(inventory?.stock || 0) }, 409)
         const unitPrice = saleDiscounts[product.id] ? Math.round(product.price * saleDiscounts[product.id]) : product.price
         orderItems.push({ productId: product.id, name: product.name, quantity, unitPrice })
       }
@@ -407,6 +449,8 @@ export async function onRequest({ request, env, params }) {
         createdAt: new Date().toISOString()
       }
       const statements = [
+        ...orderItems.map(item => env.DB.prepare('UPDATE product_inventory SET stock = stock - ?, updated_at = ? WHERE product_id = ? AND stock >= ?')
+          .bind(item.quantity, order.createdAt, item.productId, item.quantity)),
         env.DB.prepare('INSERT INTO orders (id, user_id, total, status, address_json, created_at) VALUES (?, ?, ?, ?, ?, ?)')
           .bind(order.id, user.id, order.total, order.status, JSON.stringify(order.address), order.createdAt),
         ...orderItems.map(item => env.DB.prepare('INSERT INTO order_items (order_id, product_id, name, quantity, unit_price) VALUES (?, ?, ?, ?, ?)')

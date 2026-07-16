@@ -31,6 +31,12 @@ export const rateLimits = pgTable('rate_limits', {
   resetAt: timestamp('reset_at', { withTimezone: true, mode: 'string' }).notNull()
 }, table => [index('rate_limits_reset_at_idx').on(table.resetAt)])
 
+export const productInventory = pgTable('product_inventory', {
+  productId: integer('product_id').primaryKey(),
+  stock: integer('stock').notNull().default(0),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
+}, table => [index('product_inventory_stock_idx').on(table.stock)])
+
 export const addresses = pgTable('addresses', {
   id: text('id').primaryKey(),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),

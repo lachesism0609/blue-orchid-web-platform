@@ -35,6 +35,11 @@ function BrandLogo({ onHome }) { return <a className="brand" href="#top" onClick
 
 function App() {
   const [products, setProducts] = useState([])
+  const [productSearch, setProductSearch] = useState('')
+  const [priceFilter, setPriceFilter] = useState('all')
+  const [stockOnly, setStockOnly] = useState(false)
+  const [catalogPageNumber, setCatalogPageNumber] = useState(1)
+  const [selectedProduct, setSelectedProduct] = useState(null)
   const [liked, setLiked] = useState(() => { try { return JSON.parse(localStorage.getItem('blue-orchid-favourites')) || [] } catch { return [] } })
   const [menuOpen, setMenuOpen] = useState(false)
   const [lang, setLang] = useState(() => localStorage.getItem('blue-orchid-language') || 'zh')
@@ -103,6 +108,13 @@ function App() {
     return () => { document.body.style.overflow = '' }
   }, [catalogPage, aboutPage, accountPage, favouritesPage, cartPage, authOpen])
   useEffect(() => { const timer = setInterval(() => setActiveSlide(current => (current + 1) % heroSlides.length), 5000); return () => clearInterval(timer) }, [])
+  useEffect(() => {
+    const input = document.querySelector('.tools .search input')
+    if (!input) return
+    const search = event => { setProductSearch(event.target.value); if (event.target.value) openCatalog('new') }
+    input.addEventListener('input', search)
+    return () => input.removeEventListener('input', search)
+  }, [])
   const accountRequest = async (path, options = {}) => {
     const response = await fetch(path, { ...options, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', ...options.headers } })
     if (response.status === 204) return null
@@ -187,15 +199,15 @@ function App() {
     return index === 0 ? product.image : variantImages[categoryOf(product)]?.[(index - 1) % variantImages[categoryOf(product)].length] || product.image
   }
   const selectColor = (productId, index) => setSelectedColors(current => ({ ...current, [productId]: index }))
-  const addToCart = product => { setCart(current => [...current, { productId: product.id, quantity: 1 }]); setToast(lang === 'zh' ? '已加入购物车' : 'Added to bag') }
-  const changeCartQuantity = (index, amount) => setCart(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, quantity: Math.max(1, Math.min(10, item.quantity + amount)) } : item))
+  const addToCart = product => { if (!product.inStock) { setToast(lang === 'zh' ? '该商品暂时缺货' : 'This item is out of stock'); return } setCart(current => [...current, { productId: product.id, quantity: 1 }]); setToast(lang === 'zh' ? '已加入购物车' : 'Added to bag') }
+  const changeCartQuantity = (index, amount) => setCart(current => current.map((item, itemIndex) => { if (itemIndex !== index) return item; const product = products.find(entry => entry.id === item.productId); return { ...item, quantity: Math.max(1, Math.min(10, product?.stock || 10, item.quantity + amount)) } }))
   useEffect(() => {
     const addFromCatalogTitle = event => {
       const title = event.target.closest('.catalog-grid .card h3')
       if (!title) return
       const productId = Object.keys(productNames).find(id => productNames[id].includes(title.textContent))
       const product = products.find(item => item.id === Number(productId))
-      if (product) addToCart(product)
+      if (product) setSelectedProduct(product)
     }
     document.addEventListener('click', addFromCatalogTitle)
     return () => document.removeEventListener('click', addFromCatalogTitle)
@@ -225,7 +237,18 @@ function App() {
       setTimeout(async () => { await loadAccount(); setCartPage(false); setCheckoutStage('cart'); setAccountTab('orders'); setAccountPage(true); window.history.replaceState(null, '', '#account') }, 1800)
     } catch (error) { setToast(error.message) } finally { setCheckoutLoading(false) }
   }
-  const catalogProducts = catalogPage === 'new' ? products : catalogPage === 'sale' ? products.filter(product => saleDiscounts[product.id]) : products.filter(product => categoryOf(product) === catalogPage)
+  const categoryProducts = catalogPage === 'new' ? products : catalogPage === 'sale' ? products.filter(product => saleDiscounts[product.id]) : products.filter(product => categoryOf(product) === catalogPage)
+  const filteredCatalogProducts = categoryProducts.filter(product => {
+    const name = productNames[product.id]?.[lang === 'zh' ? 0 : 1] || product.name
+    const matchesSearch = !productSearch || name.toLowerCase().includes(productSearch.toLowerCase())
+    const matchesPrice = priceFilter === 'all' || (priceFilter === 'under300' ? product.price < 300 : priceFilter === '300to600' ? product.price >= 300 && product.price <= 600 : product.price > 600)
+    return matchesSearch && matchesPrice && (!stockOnly || product.inStock)
+  })
+  const catalogPageSize = 8
+  const catalogPages = Math.max(1, Math.ceil(filteredCatalogProducts.length / catalogPageSize))
+  const visibleCatalogPage = Math.min(catalogPageNumber, catalogPages)
+  const catalogProducts = filteredCatalogProducts.slice((visibleCatalogPage - 1) * catalogPageSize, visibleCatalogPage * catalogPageSize)
+  useEffect(() => { setCatalogPageNumber(1) }, [catalogPage, productSearch, priceFilter, stockOnly])
   const salePrice = product => Math.round(product.price * (saleDiscounts[product.id] || 0.8))
   const saleLabel = product => lang === 'zh' ? `${(saleDiscounts[product.id] || 0.8) * 10}折` : `${Math.round((1 - (saleDiscounts[product.id] || 0.8)) * 100)}% OFF`
   const saveProfile = async event => { event.preventDefault(); try { const form = new FormData(event.currentTarget); const data = await accountRequest('/api/account/profile', { method: 'PUT', body: JSON.stringify({ name: form.get('name'), phone: form.get('phone') }) }); setAuthUser(data.user); localStorage.setItem('blue-orchid-user', JSON.stringify(data.user)); setAccountNotice(lang === 'zh' ? '个人信息已保存。' : 'Profile saved.') } catch (error) { setAccountNotice(error.message) } }
@@ -236,6 +259,9 @@ function App() {
     <header><BrandLogo onHome={goHome} /><button className="hamburger" onClick={() => setMenuOpen(!menuOpen)}>☰</button><nav className={menuOpen ? 'open' : ''}>{navigation.map(item => <button onClick={() => openCatalog(item.id)} key={item.id}>{item[lang]}</button>)}</nav><div className="tools"><label className="search"><Icon name="search" size={18}/><input placeholder={t.search}/></label><button className="account-button" onClick={authUser ? openAccount : openAuth} aria-label={authUser ? 'My account' : 'Log in'}>{authUser ? <span>{authUser.name.slice(0, 1).toUpperCase()}</span> : <Icon name="user"/>}</button><button onClick={openFavourites} aria-label={lang === 'zh' ? '收藏' : 'Favourites'}><Icon name="heart"/></button><button className="bag" onClick={() => { setCartPage(true); setCatalogPage(''); setFavouritesPage(false); setAccountPage(false) }}><Icon name="bag"/>{cart.length > 0 && <b>{cart.length}</b>}</button></div></header>
     <main id="top"><section className="hero"><div className="hero-copy"><small>{t.collection}</small><h1>{t.title}</h1><p>{t.intro}</p><a href="#popular" className="button">{t.shop}</a></div><div className="hero-photo" key={activeSlide} style={{ backgroundImage: `url(${heroSlides[activeSlide]})` }}></div><div className="dots">{heroSlides.map((_, index) => <button key={index} className={index === activeSlide ? 'active' : ''} onClick={() => setActiveSlide(index)} aria-label={`Slide ${index + 1}`}/>)}</div></section><section className="categories">{categoryImages.map((image, index) => <button onClick={() => openCatalog(categoryRoutes[index])} key={image}><img src={image} alt={t.categories[index]}/><span>{t.categories[index]}</span></button>)}</section><section id="popular" className="products"><div className="section-title"><h2>{t.popular}</h2><button onClick={() => openCatalog('new')}>{t.all}</button></div><div className="grid">{products.slice(0, 6).map(p => <article className="card" key={p.id}><div className="product-image"><img src={variantImage(p)} alt={productNames[p.id]?.[lang === 'zh' ? 0 : 1] || p.name}/>{saleDiscounts[p.id] && <span className="sale-badge">{saleLabel(p)}</span>}<button className={liked.includes(p.id) ? 'liked' : ''} onClick={() => toggleLike(p.id)} aria-label={t.favourite}><Icon name="heart" size={20}/></button></div><div className="product-title"><h3>{productNames[p.id]?.[lang === 'zh' ? 0 : 1] || p.name}</h3><button onClick={() => addToCart(p)}>{lang === 'zh' ? '加入购物车' : 'Add to bag'}</button></div>{saleDiscounts[p.id] ? <p className="sale-price"><s>{formatPrice(p.price)}</s><strong>{formatPrice(salePrice(p))}</strong></p> : <p>{formatPrice(p.price)}</p>}<div className="swatches">{p.colors.map((color, index) => <button className={selectedColorIndex(p) === index ? 'selected' : ''} style={{ background: color }} onClick={() => selectColor(p.id, index)} aria-label={`${lang === 'zh' ? '选择颜色' : 'Choose colour'} ${index + 1}`} key={color}/>)}</div></article>)}</div></section></main>
     <footer>{[['truck', 0], ['return', 1], ['lock', 2], ['headset', 3]].map(([icon, index]) => <div key={icon}><Icon name={icon}/><p><strong>{t.services[index][0]}</strong><span>{index === 0 ? (lang === 'zh' ? `订单满 ${formatPrice(399)}` : `On orders over ${formatPrice(399)}`) : t.services[index][1]}</span></p></div>)}</footer>
+    {catalogPage && <div className="catalog-tools"><label><Icon name="search" size={17}/><input value={productSearch} onChange={event => setProductSearch(event.target.value)} placeholder={lang === 'zh' ? '搜索商品' : 'Search products'}/></label><select value={priceFilter} onChange={event => setPriceFilter(event.target.value)}><option value="all">{lang === 'zh' ? '全部价格' : 'All prices'}</option><option value="under300">{lang === 'zh' ? '低于 ¥300' : 'Under ¥300'}</option><option value="300to600">¥300–¥600</option><option value="over600">{lang === 'zh' ? '高于 ¥600' : 'Over ¥600'}</option></select><label className="stock-filter"><input type="checkbox" checked={stockOnly} onChange={event => setStockOnly(event.target.checked)}/>{lang === 'zh' ? '仅看有货' : 'In stock only'}</label></div>}
+    {catalogPage && filteredCatalogProducts.length > 0 && <div className="catalog-pagination"><button disabled={visibleCatalogPage === 1} onClick={() => setCatalogPageNumber(page => Math.max(1, page - 1))}>←</button><span>{visibleCatalogPage} / {catalogPages}</span><button disabled={visibleCatalogPage === catalogPages} onClick={() => setCatalogPageNumber(page => Math.min(catalogPages, page + 1))}>→</button></div>}
+    {selectedProduct && <div className="product-detail-backdrop" onClick={() => setSelectedProduct(null)}><article className="product-detail" onClick={event => event.stopPropagation()}><button className="product-detail-close" onClick={() => setSelectedProduct(null)}>×</button><img src={variantImage(selectedProduct)} alt={productNames[selectedProduct.id]?.[lang === 'zh' ? 0 : 1] || selectedProduct.name}/><div><p className="about-eyebrow">BLUE ORCHID</p><h2>{productNames[selectedProduct.id]?.[lang === 'zh' ? 0 : 1] || selectedProduct.name}</h2>{selectedProduct.salePrice ? <p className="sale-price"><s>{formatPrice(selectedProduct.price)}</s><strong>{formatPrice(selectedProduct.salePrice)}</strong></p> : <strong>{formatPrice(selectedProduct.price)}</strong>}<p>{lang === 'zh' ? '以舒适、轻盈与日常实穿为核心设计的经典单品。' : selectedProduct.description}</p><dl><div><dt>{lang === 'zh' ? '材质' : 'Materials'}</dt><dd>{selectedProduct.materials}</dd></div><div><dt>{lang === 'zh' ? '尺码' : 'Sizes'}</dt><dd>{selectedProduct.sizes?.join(' · ')}</dd></div><div><dt>{lang === 'zh' ? '库存' : 'Availability'}</dt><dd>{selectedProduct.inStock ? `${selectedProduct.stock} ${lang === 'zh' ? '件有货' : 'in stock'}` : (lang === 'zh' ? '暂时缺货' : 'Out of stock')}</dd></div></dl><div className="swatches">{selectedProduct.colors.map((color, index) => <button className={selectedColorIndex(selectedProduct) === index ? 'selected' : ''} style={{ background: color }} onClick={() => selectColor(selectedProduct.id, index)} key={color}/>)}</div><button className="detail-add" disabled={!selectedProduct.inStock} onClick={() => addToCart(selectedProduct)}>{selectedProduct.inStock ? (lang === 'zh' ? '加入购物车' : 'Add to bag') : (lang === 'zh' ? '暂时缺货' : 'Out of stock')}</button></div></article></div>}
     {cartPage && <div className="favourites-page checkout-page"><section className="favourites-shell checkout-shell">
       {checkoutStage === 'success' ? <div className="checkout-success"><span>✓</span><p>BLUE ORCHID</p><h1>{lang === 'zh' ? '购买成功' : 'Order confirmed'}</h1><strong>{completedOrder?.id}</strong><p>{lang === 'zh' ? '订单已创建，即将跳转到订单历史。' : 'Your order was created. Opening order history…'}</p></div> : <>
         <header className="favourites-heading"><p>BLUE ORCHID</p><h1>{checkoutStage === 'confirm' ? (lang === 'zh' ? '确认订单' : 'Review order') : (lang === 'zh' ? '购物车' : 'Shopping bag')}</h1><span>{cartItems.reduce((sum, item) => sum + item.quantity, 0)} {lang === 'zh' ? '件商品' : 'items'}</span></header>

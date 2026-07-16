@@ -119,7 +119,8 @@ During frontend development, Vite proxies `/api` requests to `http://localhost:3
 
 | Method | Endpoint | Description |
 | --- | --- | --- |
-| `GET` | `/api/products` | Retrieve the product catalogue |
+| `GET` | `/api/products` | Retrieve products; supports `q`, `category`, `sale`, `inStock`, `minPrice`, `maxPrice`, `page`, and `limit` |
+| `GET` | `/api/products/:productId` | Retrieve product details, sizes, materials, price, and live availability |
 | `POST` | `/api/auth/register` | Register a customer |
 | `POST` | `/api/auth/login` | Log in and create a secure server-side session |
 | `POST` | `/api/auth/logout` | Revoke the current session |
@@ -201,7 +202,7 @@ $env:DATABASE_URL="postgresql://..."
 npm run db:migrate
 ```
 
-Never commit `DATABASE_URL`. Store it as an encrypted Cloudflare Pages secret. Apply migrations before deploying application code that depends on a schema change. The initial PostgreSQL migration creates customers, verification tokens, addresses, orders, order items, foreign keys, indexes, and cascade rules.
+Never commit `DATABASE_URL`. Store it as an encrypted Cloudflare Pages secret. Apply migrations before deploying application code that depends on a schema change. The PostgreSQL migrations create customers, verification tokens, sessions, rate limits, product inventory, addresses, orders, order items, foreign keys, indexes, and cascade rules. Order creation validates requested quantities against current inventory and deducts stock in the same database batch as the order.
 
 ## Current Limitations
 

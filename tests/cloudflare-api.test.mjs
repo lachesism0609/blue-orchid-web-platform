@@ -3,13 +3,17 @@ import test from 'node:test'
 import { onRequest } from '../functions/api/[[path]].js'
 
 class AuthDatabase {
-  constructor() { this.users = []; this.sessions = []; this.rateLimits = new Map() }
+  constructor() { this.users = []; this.sessions = []; this.rateLimits = new Map(); this.inventory = Array.from({ length: 30 }, (_, index) => ({ product_id: index + 1, stock: index === 4 ? 0 : 10 })) }
 
   prepare(sql) {
     const database = this
     return {
       bind(...values) {
         return {
+          async all() {
+            if (sql === 'SELECT product_id, stock FROM product_inventory') return { results: database.inventory }
+            throw new Error(`Unexpected all query: ${sql}`)
+          },
           async first() {
             if (sql === 'SELECT id FROM users WHERE email = ?') {
               const user = database.users.find(entry => entry.email === values[0])
@@ -59,7 +63,7 @@ const env = () => ({ DB: new AuthDatabase(), AUTH_SECRET: 'test-secret-that-is-n
 function context(databaseEnv, path, { method = 'GET', body, token, cookie, protocol = 'https:' } = {}) {
   return {
     env: databaseEnv,
-    params: { path: path.split('/') },
+    params: { path: path.split('?')[0].split('/') },
     request: new Request(`${protocol}//blue-orchid.pages.dev/api/${path}`, {
       method,
       headers: {
@@ -76,6 +80,20 @@ test('returns the complete product catalogue', async () => {
   const response = await onRequest(context(env(), 'products'))
   assert.equal(response.status, 200)
   assert.equal((await response.json()).length, 30)
+})
+
+test('supports product details, filtering, and pagination', async () => {
+  const databaseEnv = env()
+  const detail = await onRequest(context(databaseEnv, 'products/4'))
+  assert.equal(detail.status, 200)
+  assert.equal((await detail.json()).id, 4)
+
+  const filtered = await onRequest(context(databaseEnv, 'products?category=women&inStock=true&page=1&limit=2'))
+  assert.equal(filtered.status, 200)
+  const result = await filtered.json()
+  assert.equal(result.items.length, 2)
+  assert.equal(result.pagination.limit, 2)
+  assert.ok(result.items.every(product => product.category === 'women' && product.inStock))
 })
 
 test('returns the latest EUR/CNY reference rate', async () => {
