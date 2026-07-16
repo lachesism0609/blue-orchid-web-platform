@@ -25,3 +25,7 @@ nav button{font-size:14px;white-space:nowrap;padding:0}nav button:hover,.section
 .shipping,header{position:relative;z-index:40}.shipping{background:#f7f7f6}header{background:#fff}.catalog-page,.account-page{inset:109px 0 0}.account-close{top:20px;left:26px}@media(max-width:700px){.catalog-page,.account-page{inset:90px 0 0}.account-close{top:18px;left:20px}}
 .auth-notice{margin:0;padding:10px 12px;background:#edf4ed;color:#285f35;font-size:12px;line-height:1.5}.auth-resend{justify-self:start;color:#294887;font-size:12px;text-decoration:underline;text-underline-offset:3px}.auth-resend:disabled{opacity:.55}
 .auth-dev-verify{display:block;padding:11px 14px;background:#294887;color:#fff;text-align:center;font-size:12px;text-decoration:none}.auth-dev-verify:hover{background:#203b72}
+
+/* Keep catalogue controls below the collection heading before they scroll away. */
+.catalog-tools{top:290px}
+@media(max-width:700px){.catalog-tools{top:230px}}
