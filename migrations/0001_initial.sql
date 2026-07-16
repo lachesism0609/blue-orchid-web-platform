@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS order_items (
   product_id INTEGER NOT NULL,
   name TEXT NOT NULL,
   quantity INTEGER NOT NULL,
+  size TEXT NOT NULL DEFAULT 'One size',
   unit_price INTEGER NOT NULL,
   FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
 );

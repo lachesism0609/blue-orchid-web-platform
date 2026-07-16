@@ -65,6 +65,7 @@ function App() {
   const [favouritesPage, setFavouritesPage] = useState(() => window.location.hash === '#favourites')
   const [toast, setToast] = useState('')
   const [selectedColors, setSelectedColors] = useState({})
+  const [selectedSizes, setSelectedSizes] = useState({})
   const [cart, setCart] = useState(() => { try { return JSON.parse(localStorage.getItem('blue-orchid-cart')) || [] } catch { return [] } })
   const [cartPage, setCartPage] = useState(() => window.location.hash === '#cart')
   const [checkoutStage, setCheckoutStage] = useState('cart')
@@ -209,7 +210,7 @@ function App() {
     return index === 0 ? product.image : variantImages[categoryOf(product)]?.[(index - 1) % variantImages[categoryOf(product)].length] || product.image
   }
   const selectColor = (productId, index) => setSelectedColors(current => ({ ...current, [productId]: index }))
-  const addToCart = product => { if (!product.inStock) { setToast(lang === 'zh' ? '该商品暂时缺货' : 'This item is out of stock'); return } setCart(current => [...current, { productId: product.id, quantity: 1 }]); setToast(lang === 'zh' ? '已加入购物车' : 'Added to bag') }
+  const addToCart = product => { if (!product.inStock) { setToast(lang === 'zh' ? '该商品暂时缺货' : 'This item is out of stock'); return } const size = selectedSizes[product.id] || product.sizes?.[0] || 'One size'; setCart(current => [...current, { productId: product.id, quantity: 1, size }]); setToast(lang === 'zh' ? '已加入购物车' : 'Added to bag') }
   const changeCartQuantity = (index, amount) => setCart(current => current.map((item, itemIndex) => { if (itemIndex !== index) return item; const product = products.find(entry => entry.id === item.productId); return { ...item, quantity: Math.max(1, Math.min(10, product?.stock || 10, item.quantity + amount)) } }))
   useEffect(() => {
     const openProductDetails = event => {
@@ -225,6 +226,30 @@ function App() {
     return () => document.removeEventListener('click', openProductDetails)
   }, [products, lang])
   const cartItems = cart.map((item, index) => ({ ...item, index, product: products.find(product => product.id === item.productId) })).filter(item => item.product)
+  useEffect(() => {
+    if (!selectedProduct) return
+    const container = document.querySelector('.product-detail dl>div:nth-child(2) dd')
+    if (!container) return
+    container.replaceChildren(...selectedProduct.sizes.map(size => {
+      const button = document.createElement('button')
+      button.type = 'button'; button.textContent = size
+      button.className = (selectedSizes[selectedProduct.id] || selectedProduct.sizes[0]) === size ? 'selected' : ''
+      button.addEventListener('click', () => setSelectedSizes(current => ({ ...current, [selectedProduct.id]: size })))
+      return button
+    }))
+  }, [selectedProduct, selectedSizes])
+  useEffect(() => {
+    document.querySelectorAll('.cart-size-editor').forEach(element => element.remove())
+    document.querySelectorAll('.cart-list article').forEach((article, index) => {
+      const item = cartItems[index]
+      if (!item?.product?.sizes?.length) return
+      const label = document.createElement('label'); label.className = 'cart-size-editor'; label.textContent = lang === 'zh' ? '尺码 ' : 'Size '
+      const select = document.createElement('select')
+      item.product.sizes.forEach(size => { const option = document.createElement('option'); option.value = size; option.textContent = size; option.selected = (item.size || item.product.sizes[0]) === size; select.append(option) })
+      select.addEventListener('change', event => setCart(current => current.map((entry, itemIndex) => itemIndex === item.index ? { ...entry, size: event.target.value } : entry)))
+      label.append(select); article.querySelector(':scope > div')?.append(label)
+    })
+  }, [cart, products, lang])
   const cartUnitPrice = product => saleDiscounts[product.id] ? Math.round(product.price * saleDiscounts[product.id]) : product.price
   const cartTotal = cartItems.reduce((sum, item) => sum + cartUnitPrice(item.product) * item.quantity, 0)
   const handleCheckout = async () => {
@@ -242,7 +267,7 @@ function App() {
     if (!selectedAddressId || checkoutLoading) return
     setCheckoutLoading(true)
     try {
-      const data = await accountRequest('/api/account/orders', { method: 'POST', body: JSON.stringify({ addressId: selectedAddressId, items: cartItems.map(item => ({ productId: item.productId, quantity: item.quantity })) }) })
+      const data = await accountRequest('/api/account/orders', { method: 'POST', body: JSON.stringify({ addressId: selectedAddressId, items: cartItems.map(item => ({ productId: item.productId, quantity: item.quantity, size: item.size || item.product.sizes?.[0] || 'One size' })) }) })
       setCompletedOrder(data.order)
       setCart([])
       setCheckoutStage('success')

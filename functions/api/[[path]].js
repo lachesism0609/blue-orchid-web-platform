@@ -260,7 +260,7 @@ async function listOrders(env, userId) {
     status: order.status,
     address: typeof order.address_json === 'string' ? JSON.parse(order.address_json) : order.address_json,
     createdAt: order.created_at,
-    items: items.filter(item => item.order_id === order.id).map(item => ({ productId: item.product_id, name: item.name, quantity: item.quantity, unitPrice: item.unit_price }))
+    items: items.filter(item => item.order_id === order.id).map(item => ({ productId: item.product_id, name: item.name, quantity: item.quantity, size: item.size || 'One size', unitPrice: item.unit_price }))
   }))
 }
 
@@ -432,10 +432,13 @@ export async function onRequest({ request, env, params }) {
         const product = products.find(entry => entry.id === Number(item.productId))
         if (!product) return json({ message: '商品不存在。' }, 400)
         const quantity = Math.max(1, Math.min(10, Number(item.quantity) || 1))
+        const sizes = (productDetails[product.category] || productDetails.accessories).sizes
+        const size = String(item.size || sizes[0])
+        if (!sizes.includes(size)) return json({ message: `${product.name} is not available in size ${size}.`, code: 'INVALID_SIZE', productId: product.id }, 400)
         const inventory = await env.DB.prepare('SELECT stock FROM product_inventory WHERE product_id = ?').bind(product.id).first()
         if (!inventory || Number(inventory.stock) < quantity) return json({ message: `${product.name} has only ${Number(inventory?.stock || 0)} item(s) available.`, code: 'INSUFFICIENT_STOCK', productId: product.id, available: Number(inventory?.stock || 0) }, 409)
         const unitPrice = saleDiscounts[product.id] ? Math.round(product.price * saleDiscounts[product.id]) : product.price
-        orderItems.push({ productId: product.id, name: product.name, quantity, unitPrice })
+        orderItems.push({ productId: product.id, name: product.name, quantity, size, unitPrice })
       }
 
       const total = orderItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)
@@ -453,8 +456,8 @@ export async function onRequest({ request, env, params }) {
           .bind(item.quantity, order.createdAt, item.productId, item.quantity)),
         env.DB.prepare('INSERT INTO orders (id, user_id, total, status, address_json, created_at) VALUES (?, ?, ?, ?, ?, ?)')
           .bind(order.id, user.id, order.total, order.status, JSON.stringify(order.address), order.createdAt),
-        ...orderItems.map(item => env.DB.prepare('INSERT INTO order_items (order_id, product_id, name, quantity, unit_price) VALUES (?, ?, ?, ?, ?)')
-          .bind(order.id, item.productId, item.name, item.quantity, item.unitPrice))
+        ...orderItems.map(item => env.DB.prepare('INSERT INTO order_items (order_id, product_id, name, quantity, size, unit_price) VALUES (?, ?, ?, ?, ?, ?)')
+          .bind(order.id, item.productId, item.name, item.quantity, item.size, item.unitPrice))
       ]
       await env.DB.batch(statements)
       return json({ order }, 201)
