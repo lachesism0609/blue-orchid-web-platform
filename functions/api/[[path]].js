@@ -49,6 +49,25 @@ function json(data, status = 200) {
   })
 }
 
+function cachedJson(data, maxAge = 3600) {
+  return new Response(JSON.stringify(data), {
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': `public, max-age=${maxAge}, s-maxage=${maxAge}`,
+      'X-Content-Type-Options': 'nosniff'
+    }
+  })
+}
+
+async function latestExchangeRate() {
+  const response = await fetch('https://api.frankfurter.dev/v2/rate/EUR/CNY', { headers: { Accept: 'application/json' } })
+  if (!response.ok) throw new Error(`Exchange-rate provider returned ${response.status}`)
+  const data = await response.json()
+  const rate = Number(data.rate)
+  if (!Number.isFinite(rate) || rate <= 0) throw new Error('Exchange-rate provider returned an invalid rate')
+  return { base: 'EUR', quote: 'CNY', rate, date: data.date, source: 'Frankfurter' }
+}
+
 function bytesToBase64url(bytes) {
   let binary = ''
   for (let index = 0; index < bytes.length; index += 1) binary += String.fromCharCode(bytes[index])
@@ -196,6 +215,7 @@ export async function onRequest({ request, env, params }) {
 
   try {
     if (method === 'OPTIONS') return new Response(null, { status: 204 })
+    if (method === 'GET' && route === 'exchange-rate') return cachedJson(await latestExchangeRate())
     if (method === 'GET' && route === 'products') return json(products)
 
     if (method === 'POST' && route === 'auth/register') {

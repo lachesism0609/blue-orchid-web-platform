@@ -120,6 +120,17 @@ const requireAuth = async (req, res, next) => {
 
 app.get('/api/products', (_req, res) => res.json(products))
 
+app.get('/api/exchange-rate', async (_req, res, next) => {
+  try {
+    const response = await fetch('https://api.frankfurter.dev/v2/rate/EUR/CNY', { headers: { Accept: 'application/json' } })
+    if (!response.ok) throw new Error(`Exchange-rate provider returned ${response.status}`)
+    const data = await response.json()
+    const rate = Number(data.rate)
+    if (!Number.isFinite(rate) || rate <= 0) throw new Error('Exchange-rate provider returned an invalid rate')
+    res.set('Cache-Control', 'public, max-age=3600').json({ base: 'EUR', quote: 'CNY', rate, date: data.date, source: 'Frankfurter' })
+  } catch (error) { next(error) }
+})
+
 app.post('/api/auth/register', async (req, res, next) => {
   try {
     const name = String(req.body.name || '').trim()

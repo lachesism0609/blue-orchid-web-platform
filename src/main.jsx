@@ -39,6 +39,8 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [lang, setLang] = useState(() => localStorage.getItem('blue-orchid-language') || 'zh')
   const [currency, setCurrency] = useState(() => localStorage.getItem('blue-orchid-currency') || 'CNY')
+  const [eurCnyRate, setEurCnyRate] = useState(() => Number(localStorage.getItem('blue-orchid-eur-cny-rate')) || 7.8)
+  const [exchangeRateDate, setExchangeRateDate] = useState(() => localStorage.getItem('blue-orchid-exchange-rate-date') || '')
   const [activeSlide, setActiveSlide] = useState(0)
   const [authOpen, setAuthOpen] = useState(false)
   const [authMode, setAuthMode] = useState('login')
@@ -67,6 +69,17 @@ function App() {
   const [checkoutLoading, setCheckoutLoading] = useState(false)
   const t = copy[lang]
   useEffect(() => { fetch('/api/products').then(r => r.json()).then(setProducts).catch(() => {}) }, [])
+  useEffect(() => {
+    fetch('/api/exchange-rate').then(response => {
+      if (!response.ok) throw new Error('Exchange rate unavailable')
+      return response.json()
+    }).then(data => {
+      if (!Number.isFinite(Number(data.rate)) || Number(data.rate) <= 0) return
+      setEurCnyRate(Number(data.rate)); setExchangeRateDate(data.date || '')
+      localStorage.setItem('blue-orchid-eur-cny-rate', String(data.rate))
+      localStorage.setItem('blue-orchid-exchange-rate-date', data.date || '')
+    }).catch(() => {})
+  }, [])
   useEffect(() => { localStorage.setItem('blue-orchid-language', lang); document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en' }, [lang])
   useEffect(() => { localStorage.setItem('blue-orchid-currency', currency) }, [currency])
   useEffect(() => { localStorage.setItem('blue-orchid-favourites', JSON.stringify(liked)) }, [liked])
@@ -113,7 +126,7 @@ function App() {
     return () => document.removeEventListener('click', openOrderDetails)
   }, [accountData.orders])
   const toggleLike = id => setLiked(old => { if (old.includes(id)) return old.filter(x => x !== id); setToast(lang === 'zh' ? '已添加到收藏' : 'Added to favourites'); return [...old, id] })
-  const formatPrice = value => currency === 'CNY' ? `¥${value}` : `€${(value / 7.8).toFixed(2)}`
+  const formatPrice = value => currency === 'CNY' ? `¥${value}` : `€${(value / eurCnyRate).toFixed(2)}`
   const shippingText = lang === 'zh' ? `订单满 ${formatPrice(399)} 享免费配送` : `Free shipping on orders over ${formatPrice(399)}`
   const openAuth = () => { if (authUser && cartPage) { handleCheckout(); return }; setAuthError(''); setAuthOpen(true) }
   const submitAuth = async event => {
@@ -215,7 +228,7 @@ function App() {
   const addAddress = async event => { event.preventDefault(); try { const form = new FormData(event.currentTarget); const data = await accountRequest('/api/account/addresses', { method: 'POST', body: JSON.stringify(Object.fromEntries(form)) }); setAccountData(current => ({ ...current, addresses: [...current.addresses, data.address] })); event.currentTarget.reset(); setAccountNotice(lang === 'zh' ? '地址已添加。' : 'Address added.') } catch (error) { setAccountNotice(error.message) } }
   const deleteAddress = async id => { try { await accountRequest(`/api/account/addresses/${id}`, { method: 'DELETE' }); setAccountData(current => ({ ...current, addresses: current.addresses.filter(address => address.id !== id) })) } catch (error) { setAccountNotice(error.message) } }
   return <>
-    <div className="shipping"><span className="shipping-message">{shippingText}</span><div className="top-controls" aria-label="Language and currency settings"><button className="text-toggle" onClick={() => setLang(current => current === 'zh' ? 'en' : 'zh')} aria-label="Switch language" title="Switch language">{lang === 'zh' ? '中' : 'EN'}</button><i></i><button className="text-toggle" onClick={() => setCurrency(current => current === 'CNY' ? 'EUR' : 'CNY')} aria-label="Switch currency" title="Switch currency">{currency}</button></div></div>
+    <div className="shipping"><span className="shipping-message">{shippingText}</span><div className="top-controls" aria-label="Language and currency settings"><button className="text-toggle" onClick={() => setLang(current => current === 'zh' ? 'en' : 'zh')} aria-label="Switch language" title="Switch language">{lang === 'zh' ? '中' : 'EN'}</button><i></i><button className="text-toggle" onClick={() => setCurrency(current => current === 'CNY' ? 'EUR' : 'CNY')} aria-label="Switch currency" title={`${lang === 'zh' ? '切换货币' : 'Switch currency'} · 1 EUR = ${eurCnyRate.toFixed(4)} CNY${exchangeRateDate ? ` · ${exchangeRateDate}` : ''}`}>{currency}</button></div></div>
     <header><BrandLogo onHome={goHome} /><button className="hamburger" onClick={() => setMenuOpen(!menuOpen)}>☰</button><nav className={menuOpen ? 'open' : ''}>{navigation.map(item => <button onClick={() => openCatalog(item.id)} key={item.id}>{item[lang]}</button>)}</nav><div className="tools"><label className="search"><Icon name="search" size={18}/><input placeholder={t.search}/></label><button className="account-button" onClick={authUser ? openAccount : openAuth} aria-label={authUser ? 'My account' : 'Log in'}>{authUser ? <span>{authUser.name.slice(0, 1).toUpperCase()}</span> : <Icon name="user"/>}</button><button onClick={openFavourites} aria-label={lang === 'zh' ? '收藏' : 'Favourites'}><Icon name="heart"/></button><button className="bag" onClick={() => { setCartPage(true); setCatalogPage(''); setFavouritesPage(false); setAccountPage(false) }}><Icon name="bag"/>{cart.length > 0 && <b>{cart.length}</b>}</button></div></header>
     <main id="top"><section className="hero"><div className="hero-copy"><small>{t.collection}</small><h1>{t.title}</h1><p>{t.intro}</p><a href="#popular" className="button">{t.shop}</a></div><div className="hero-photo" key={activeSlide} style={{ backgroundImage: `url(${heroSlides[activeSlide]})` }}></div><div className="dots">{heroSlides.map((_, index) => <button key={index} className={index === activeSlide ? 'active' : ''} onClick={() => setActiveSlide(index)} aria-label={`Slide ${index + 1}`}/>)}</div></section><section className="categories">{categoryImages.map((image, index) => <button onClick={() => openCatalog(categoryRoutes[index])} key={image}><img src={image} alt={t.categories[index]}/><span>{t.categories[index]}</span></button>)}</section><section id="popular" className="products"><div className="section-title"><h2>{t.popular}</h2><button onClick={() => openCatalog('new')}>{t.all}</button></div><div className="grid">{products.slice(0, 6).map(p => <article className="card" key={p.id}><div className="product-image"><img src={variantImage(p)} alt={productNames[p.id]?.[lang === 'zh' ? 0 : 1] || p.name}/>{saleDiscounts[p.id] && <span className="sale-badge">{saleLabel(p)}</span>}<button className={liked.includes(p.id) ? 'liked' : ''} onClick={() => toggleLike(p.id)} aria-label={t.favourite}><Icon name="heart" size={20}/></button></div><div className="product-title"><h3>{productNames[p.id]?.[lang === 'zh' ? 0 : 1] || p.name}</h3><button onClick={() => addToCart(p)}>{lang === 'zh' ? '加入购物车' : 'Add to bag'}</button></div>{saleDiscounts[p.id] ? <p className="sale-price"><s>{formatPrice(p.price)}</s><strong>{formatPrice(salePrice(p))}</strong></p> : <p>{formatPrice(p.price)}</p>}<div className="swatches">{p.colors.map((color, index) => <button className={selectedColorIndex(p) === index ? 'selected' : ''} style={{ background: color }} onClick={() => selectColor(p.id, index)} aria-label={`${lang === 'zh' ? '选择颜色' : 'Choose colour'} ${index + 1}`} key={color}/>)}</div></article>)}</div></section></main>
     <footer>{[['truck', 0], ['return', 1], ['lock', 2], ['headset', 3]].map(([icon, index]) => <div key={icon}><Icon name={icon}/><p><strong>{t.services[index][0]}</strong><span>{index === 0 ? (lang === 'zh' ? `订单满 ${formatPrice(399)}` : `On orders over ${formatPrice(399)}`) : t.services[index][1]}</span></p></div>)}</footer>

@@ -187,7 +187,7 @@ The original Express server remains available for local development through `npm
 - No real payment gateway is connected; confirming a purchase only creates a simulated order.
 - The local Express server still uses JSON storage and is not designed for a live multi-user service; Cloudflare deployments use D1 instead.
 - There is no administration dashboard, inventory management, delivery tracking, refund workflow, or coupon system.
-- CNY and EUR values use a fixed demonstration rate rather than live exchange-rate data.
+- EUR prices use the latest EUR/CNY reference rate supplied by Frankfurter and cached for one hour. The last successful rate is retained locally as a network-failure fallback.
 - Customer service email addresses, telephone numbers, and opening hours shown in the application are sample information.
 
 ## Suggested Next Steps

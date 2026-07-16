@@ -64,6 +64,20 @@ test('returns the complete product catalogue', async () => {
   assert.equal((await response.json()).length, 30)
 })
 
+test('returns the latest EUR/CNY reference rate', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async url => {
+    assert.equal(url, 'https://api.frankfurter.dev/v2/rate/EUR/CNY')
+    return new Response(JSON.stringify({ date: '2026-07-16', base: 'EUR', quote: 'CNY', rate: 8.25 }), { status: 200 })
+  }
+  try {
+    const response = await onRequest(context(env(), 'exchange-rate'))
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), { base: 'EUR', quote: 'CNY', rate: 8.25, date: '2026-07-16', source: 'Frankfurter' })
+    assert.match(response.headers.get('cache-control'), /max-age=3600/)
+  } finally { globalThis.fetch = originalFetch }
+})
+
 test('registers, verifies email, logs in, rejects a bad password, and validates the token', async () => {
   const databaseEnv = env()
   const credentials = { name: 'Blue Orchid User', email: 'user@example.com', password: 'eRkaC7iT39b!4d5' }
