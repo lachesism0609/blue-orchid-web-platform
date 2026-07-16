@@ -171,9 +171,26 @@ function ProductFields({ product, zh }) {
   );
 }
 
-function ProductEditor({ product, zh, busy, onSave, onVariant, onSku }) {
+function ProductEditor({
+  product,
+  zh,
+  busy,
+  onBack,
+  onSave,
+  onVariant,
+  onSku,
+}) {
   return (
     <section className="admin-editor">
+      <button
+        type="button"
+        className="admin-editor-back"
+        onClick={onBack}
+        aria-label={zh ? "返回商品列表" : "Back to product list"}
+      >
+        <span aria-hidden="true">←</span>
+        {zh ? "返回商品列表" : "Back to products"}
+      </button>
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -407,6 +424,7 @@ export default function AdminPage({
                   product={editingProduct}
                   zh={zh}
                   busy={busy}
+                  onBack={() => setEditingId(null)}
                   onSave={(payload) =>
                     run(
                       () => onUpdateProduct(editingProduct.id, payload),

@@ -1,227 +1,178 @@
-# Blue Orchid Fashion Store
+# Blue Orchid Web Platform
 
-Blue Orchid is a bilingual fashion e-commerce application built with React, Vite, Node.js, Cloudflare Pages Functions, Express, and PostgreSQL. It covers the core shopping journey plus a role-protected product, inventory, and order administration workspace.
+Blue Orchid is a bilingual, full-stack fashion commerce demonstration built with React, Node.js, Cloudflare Pages Functions, and managed PostgreSQL. It includes a responsive storefront, authenticated customer journeys, inventory-aware checkout, and a role-protected product and order administration workspace.
 
-The project is suitable as an online fashion store prototype, a full-stack learning project, or a foundation for further commercial development.
+The project is intended as a production-oriented learning platform and commerce prototype. Checkout creates real database orders and deducts inventory, but no payment provider is connected.
 
-> This is currently a demonstration project. Production data is stored in managed PostgreSQL, the local Express fallback still uses a JSON file for customer accounts, and checkout does not process real payments.
+## Highlights
 
-## Features
+### Storefront
 
-### Storefront and Products
+- Responsive Chinese and English interface with CNY and EUR display
+- Automatic hero carousel and category pages for new arrivals, women, men, bags, shoes, accessories, and sale items
+- PostgreSQL-backed product catalogue with search, category and price filters, stock filtering, and pagination
+- Product details with large images, bilingual descriptions, materials, colour/style variants, sizes, and exact SKU availability
+- Consistent original prices, sale prices, and discount badges wherever discounted products appear
+- Live EUR/CNY reference rates from Frankfurter with a cached fallback
+- Responsive About page with brand content and sample customer-service information
 
-- Responsive homepage with brand navigation, an automatic hero carousel, category shortcuts, popular products, and service highlights
-- Dedicated pages for New Arrivals, Women, Men, Bags, Shoes, Accessories, and Sale
-- Chinese and English interface switching
-- CNY and EUR currency switching using the sample rate `1 EUR = CNY 7.80`
-- Product colour selectors with corresponding image previews
-- Consistent sale prices, original prices, and discount badges across all relevant pages
-- Product favourites with success notifications and a dedicated favourites page
-- Enhanced About page with brand information, values, imagery, and customer service details
+### Customer experience
 
-### Cart and Orders
-
-- Add-to-cart controls on every product card
-- Editable item quantities, item removal, and price totals in the cart
-- Complete simulated checkout flow:
-  1. Continue from the cart to the order review page
-  2. Review products, quantities, unit prices, and the order total
-  3. Select an existing delivery address
-  4. Confirm the purchase and create an order
-  5. View a purchase success page
-  6. Automatically continue to Order History in the customer account
-- Order history and order details, including products, quantities, prices, order time, status, and delivery address
-- Cart and favourite data synchronized through authenticated PostgreSQL records across refreshes and devices
-
-### Customer Accounts
-
-- Customer registration, login, and session validation
-- Personal information viewing and editing
-- Delivery address creation, viewing, and deletion
-- Page restoration after refreshing account, cart, favourites, and category pages
-- Passwords stored with salted PBKDF2 in production and `scrypt` in the local Express fallback
-- Secure, HTTP-only cookie sessions with expiry, revocation, rate limiting, and session invalidation controls
+- Email registration, one-time verification links, login, logout, and session revocation
+- Authenticated favourites and cart data synchronized through PostgreSQL across refreshes and devices
+- Editable cart quantities and product-option changes through the product detail view
+- Profile editing and delivery-address management
+- Inventory-validated checkout flow:
+  1. Review cart items, quantities, prices, and total
+  2. Select an existing delivery address
+  3. Confirm the purchase
+  4. Create the order and deduct SKU stock transactionally
+  5. Show purchase success and continue to Order History
+- Order history and order details with products, quantities, prices, timestamps, status, and delivery address
+- Hash-based page restoration for account, cart, favourites, checkout, administration, and catalogue views
 
 ### Administration
 
-- Database-backed `customer` and `admin` roles with server-side authorization on every administration endpoint
-- Product creation and editing for bilingual names, descriptions, materials, category, price, sale percentage, visibility, and images
-- Colour/style editing and stock management at individual SKU and size level
-- Order review with customer, line-item, price, delivery-address, and timestamp details
-- Controlled order status workflow covering confirmed, processing, shipped, completed, and cancelled orders
-- Responsive administration workspace available from the header for administrator accounts
+- Database-backed `customer` and `admin` roles with server-side authorization
+- Product creation and editing for bilingual copy, materials, category, price, sale percentage, visibility, and images
+- Colour/style management plus size-level SKU inventory updates
+- Product editor navigation back to the product and inventory list
+- Order lookup, full order details, and controlled status updates for confirmed, processing, shipped, completed, and cancelled orders
+- Responsive administration workspace available only to administrator accounts
 
-## Technology Stack
+## Technology stack
 
 | Layer | Technology |
 | --- | --- |
-| Frontend | React 18, Vite 6, CSS |
-| Backend | Cloudflare Pages Functions and Node.js / Express 4 |
-| Authentication | PBKDF2 or `crypto.scryptSync`, secure cookie sessions, database roles |
-| Data storage | Managed PostgreSQL with Drizzle migrations; local JSON development fallback |
-| Development proxy | Vite `/api` proxy to Express |
+| Frontend | React 18, Vite 6, component-based JSX, responsive CSS |
+| Production API | Cloudflare Pages Functions |
+| Local API | Node.js and Express 4 |
+| Database | Neon-compatible PostgreSQL, Drizzle ORM schema and SQL migrations |
+| Authentication | PBKDF2 in production, `crypto.scryptSync` in the local fallback, secure cookie sessions |
+| Email | Resend verification email delivery with a development demonstration mode |
+| Quality | Node test runner, Prettier, Drizzle schema checks, Vite production builds |
+| Delivery | GitHub Actions and Cloudflare Pages |
 
-## Getting Started
+## Requirements
 
-### Requirements
-
-- Node.js 18 or later
+- Node.js 22 recommended
 - npm
+- A PostgreSQL connection string for catalogue, customer, cart, order, and administration features
+- Resend credentials when real verification email delivery is required
 
-### Install Dependencies
+## Local setup
+
+Install dependencies:
 
 ```bash
 npm install
 ```
 
-If the Windows PowerShell execution policy prevents `npm.ps1` from running, use:
+Copy `.env.example` to `.env` for the database scripts, then replace all placeholder values. The Express development server reads environment variables from the process, so export them before starting the combined development environment.
 
-```powershell
-npm.cmd install
-```
-
-### Configure the Authentication Secret
-
-The repository includes `.env.example` as a variable reference. The server does not currently load `.env` automatically, so set `AUTH_SECRET` in the terminal or deployment environment before starting the application.
-
-Windows PowerShell:
+PowerShell example:
 
 ```powershell
 $env:AUTH_SECRET="replace-with-a-long-random-secret"
+$env:DATABASE_URL="postgresql://user:password@host/database?sslmode=require"
+$env:SITE_URL="http://localhost:5173"
+$env:DEV_EMAIL_VERIFICATION="true"
+npm run db:migrate
+npm run db:seed
 npm run dev
 ```
 
-macOS or Linux:
-
-```bash
-AUTH_SECRET="replace-with-a-long-random-secret" npm run dev
-```
-
-A built-in fallback value is available for local development, but production environments must use a unique, securely generated secret. Changing the secret invalidates previously issued authentication tokens.
-
-### Start the Development Environment
-
-```bash
-npm run dev
-```
-
-The application is normally available at:
+The development services are normally available at:
 
 - Frontend: `http://localhost:5173`
-- Backend API: `http://localhost:3010`
+- Express API: `http://localhost:3010`
 
-The `npm run dev` command starts both the Vite frontend and Express backend. Registration, login, address management, and order features require the backend service to be running.
+Vite proxies `/api` requests to the Express server. Keep both services running when testing authentication, accounts, carts, addresses, orders, or administration.
 
-## Available Scripts
+## Environment variables
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `AUTH_SECRET` | Production | Strong secret used by authentication and security helpers |
+| `DATABASE_URL` | Yes | Managed PostgreSQL connection string |
+| `RESEND_API_KEY` | Email delivery | Resend API credential |
+| `EMAIL_FROM` | Email delivery | Sender using a Resend-verified domain |
+| `SITE_URL` | Yes | Public application origin used in verification links |
+| `DEV_EMAIL_VERIFICATION` | Development only | Returns a demonstration verification link when set to `true` |
+| `ADMIN_EMAIL` | Admin provisioning | Registered email promoted by `db:promote-admin` |
+| `ADMIN_EMAILS` | Local development | Optional comma-separated Express administrator emails |
+| `CLOUDFLARE_API_TOKEN` | Deployment | Cloudflare Pages deployment token |
+| `CLOUDFLARE_ACCOUNT_ID` | Deployment | Cloudflare account identifier |
+
+Never commit real secrets or database URLs. Store production values in the GitHub `production` environment and Cloudflare Pages configuration.
+
+## Available commands
 
 | Command | Description |
 | --- | --- |
-| `npm run dev` | Start the frontend and backend development services |
+| `npm run dev` | Start Vite and the Express API together |
 | `npm run dev:client` | Start only the Vite frontend |
-| `npm run server` | Start only the Express backend on port 3010 by default |
-| `npm run build` | Create a production build in `dist/` |
+| `npm run server` | Start only the Express API |
+| `npm run build` | Build the production frontend into `dist/` |
 | `npm run preview` | Preview the production build locally |
-| `npm run db:generate` | Generate a Drizzle SQL migration from the managed schema |
+| `npm test` | Run all frontend and backend tests |
+| `npm run test:frontend` | Test catalogue, filtering, pagination, and cart utilities |
+| `npm run test:backend` | Test Cloudflare API and administration behaviour |
+| `npm run format:check` | Verify source and test formatting |
+| `npm run db:generate` | Generate a Drizzle migration after schema changes |
+| `npm run db:check` | Validate the Drizzle schema and migration history |
 | `npm run db:migrate` | Apply pending PostgreSQL migrations |
-| `npm run db:seed` | Idempotently seed the product catalogue and SKU inventory |
-| `npm run db:promote-admin` | Promote the registered account in `ADMIN_EMAIL` to administrator |
+| `npm run db:seed` | Insert missing catalogue and SKU seed records without overwriting managed data |
+| `npm run db:promote-admin` | Promote the account in `ADMIN_EMAIL` to administrator |
 
-## API Overview
-
-During frontend development, Vite proxies `/api` requests to `http://localhost:3010`.
-
-| Method | Endpoint | Description |
-| --- | --- | --- |
-| `GET` | `/api/products` | Retrieve products; supports `q`, `category`, `sale`, `inStock`, `minPrice`, `maxPrice`, `page`, and `limit` |
-| `GET` | `/api/products/:productId` | Retrieve PostgreSQL-backed product details, variants, sizes, SKU inventory, materials, price, and live availability |
-| `POST` | `/api/auth/register` | Register a customer |
-| `POST` | `/api/auth/login` | Log in and create a secure server-side session |
-| `POST` | `/api/auth/logout` | Revoke the current session |
-| `POST` | `/api/auth/revoke-sessions` | Revoke every active session for the customer |
-| `GET` | `/api/auth/me` | Retrieve the authenticated customer |
-| `PUT` | `/api/account/profile` | Update personal information |
-| `GET` | `/api/account/addresses` | Retrieve delivery addresses |
-| `POST` | `/api/account/addresses` | Create a delivery address |
-| `DELETE` | `/api/account/addresses/:addressId` | Delete a delivery address |
-| `GET` | `/api/account/orders` | Retrieve order history |
-| `POST` | `/api/account/orders` | Create an order |
-
-Protected account endpoints use an opaque session token stored in a `Secure`, `HttpOnly`, `SameSite=Strict` cookie. JavaScript cannot read the token. Sessions are stored as SHA-256 token hashes, expire after seven days, track last use, and can be revoked immediately. The API temporarily accepts bearer tokens for backwards compatibility, but the React client no longer stores credentials in `localStorage`.
-
-Production HTTP requests are redirected to HTTPS. State-changing requests reject a mismatched `Origin`, authentication endpoints are rate limited per hashed client IP, and authenticated writes have a separate limit. Rate-limit state and session revocations are stored in the database so they remain effective across Cloudflare isolates.
-
-## Project Structure
+## Project structure
 
 ```text
 blue-orchid-web-platform/
 ├─ src/
-│  ├─ main.jsx          # React views, navigation state, and store interactions
-│  └─ styles.css        # Application-wide responsive styles
+│  ├─ components/             # Store, account, checkout, product, and admin views
+│  ├─ App.jsx                 # Application state, API integration, and navigation
+│  ├─ main.jsx                # React entry point
+│  ├─ store-utils.js          # Catalogue, pagination, and cart helpers
+│  └─ styles.css              # Responsive application styles
+├─ functions/
+│  ├─ api/[[path]].js         # Cloudflare Pages API router
+│  └─ _lib/                   # Database, catalogue, customer, and admin helpers
 ├─ server/
-│  ├─ index.js          # Express API, authentication, and data handling
-│  ├─ dev.js            # Combined frontend and backend development launcher
-│  └─ data/             # Local customer, address, and order data (not committed)
-├─ .env.example         # Authentication secret variable reference
-├─ vite.config.js       # Vite configuration and API proxy
-└─ package.json         # Dependencies and project scripts
+│  ├─ index.js                # Express development API
+│  ├─ dev.js                  # Combined local launcher
+│  └─ data/                   # Development-only JSON fallback data
+├─ db/
+│  ├─ schema.js               # Managed PostgreSQL schema
+│  ├─ migrate.js              # Migration runner
+│  ├─ seed.js                 # Non-destructive catalogue seeding
+│  └─ promote-admin.js        # Administrator provisioning
+├─ drizzle/                   # Version-controlled PostgreSQL migrations
+├─ tests/                     # Frontend utility and backend integration tests
+├─ public/_routes.json        # Cloudflare Pages Function routing
+└─ .github/workflows/         # Verification and deployment pipeline
 ```
 
-## Data and Navigation State
+## Database and migrations
 
-- Customer, address, and order data is stored in `server/data/users.json`. The data directory is excluded from Git.
-- Favourites and cart contents are stored in the browser. Clearing the site's browser data removes them.
-- The current page is represented by a URL hash such as `#cart`, `#account`, or `#about`, allowing the application to restore the page after a refresh.
-- Product images are loaded from remote image services and may be unavailable when offline or when an image provider cannot be reached.
+PostgreSQL stores products, variants, sizes, SKUs, users, verification tokens, sessions, rate limits, favourites, cart items, addresses, orders, order items, and error-monitoring events. Foreign keys, uniqueness rules, indexes, and cascade behaviour are defined in `db/schema.js` and version-controlled under `drizzle/`.
 
-## Cloudflare Deployment
-
-The repository includes a Cloudflare Pages Functions backend and a D1 schema for a full-stack deployment:
-
-- `functions/api/[[path]].js` provides the product, authentication, profile, address, and order APIs.
-- `migrations/0001_initial.sql` creates the D1 tables and indexes.
-- `public/_routes.json` limits Pages Functions invocations to `/api/*`, leaving static assets on the Pages CDN.
-
-Create a Cloudflare Pages project connected to this repository with the following build settings:
-
-| Setting | Value |
-| --- | --- |
-| Framework preset | Vite |
-| Build command | `npm run build` |
-| Build output directory | `dist` |
-| Root directory | `/` |
-
-Create a D1 database, execute `migrations/0001_initial.sql`, `migrations/0002_email_verification.sql`, and `migrations/0003_secure_sessions.sql`, then bind it to the Pages project using the variable name `DB`. Also create encrypted Pages secrets named `AUTH_SECRET` and `RESEND_API_KEY`, plus the `EMAIL_FROM` and `SITE_URL` variables. `EMAIL_FROM` must use a sender/domain verified in Resend; `SITE_URL` must be the public Pages origin such as `https://blue-orchid-web-platform.pages.dev`. Redeploy the project after adding or changing bindings.
-
-New customers receive a one-time verification link that expires after 24 hours. Login is blocked until verification succeeds, and the login dialog can resend the message. For development demonstrations, `DEV_EMAIL_VERIFICATION=true` returns the verification URL in the registration response and displays a demo verification button when email delivery is not configured. Do not enable this variable for a public production store.
-
-The original Express server remains available for local development through `npm run dev`. Local Express data and production Cloudflare D1 data are independent and are not synchronized automatically.
-
-### Managed PostgreSQL and migrations
-
-The catalogue uses managed PostgreSQL through Neon's serverless HTTP driver. Products, bilingual copy, discounts, colour variants, variant images, sizes, and stock-bearing SKUs are stored in PostgreSQL instead of application constants. `DATABASE_URL` is therefore required for both the Pages Functions catalogue and the local Express catalogue.
-
-The version-controlled Drizzle schema is located in `db/schema.js`, generated SQL migrations are stored in `drizzle/`, and `db/migrate.js` applies them over Neon's HTTP driver. Use the following workflow after changing the schema:
+After changing the schema:
 
 ```bash
 npm run db:generate
 npm run db:check
-DATABASE_URL="postgresql://..." npm run db:migrate
-DATABASE_URL="postgresql://..." npm run db:seed
-```
-
-For PowerShell:
-
-```powershell
-$env:DATABASE_URL="postgresql://..."
 npm run db:migrate
 npm run db:seed
 ```
 
-Never commit `DATABASE_URL`. Store it as an encrypted Cloudflare Pages secret and as a GitHub repository or production-environment secret for the deployment workflow. Apply migrations before deploying application code that depends on a schema change, then run the idempotent catalogue seed. The schema includes products, variants, sizes, SKUs, customers, verification tokens, sessions, rate limits, favourites, cart items, addresses, orders, order items, foreign keys, indexes, and cascade rules. Signed-in customers load favourites and cart selections from PostgreSQL, so those selections survive refreshes and are shared across devices. The seed only inserts missing products, variants, sizes, and SKUs; it never overwrites administrator-managed catalogue fields, visibility, merchandising, or stock during later deployments. Order creation reads the authenticated customer's server-side cart, validates every variant, size, quantity, and stock level, then deducts inventory and clears the cart in the same database transaction.
+The seed is intentionally non-destructive. Existing administrator-managed product fields, visibility, merchandising, variant data, and inventory are preserved; only missing seed records are inserted.
 
-### Provisioning an administrator
+Order creation reads the authenticated customer's server-side cart, validates product, variant, size, quantity, and current stock, then creates the order, deducts SKU inventory, and clears the cart in the same database transaction.
 
-Register and verify the account normally, apply the role migration, then promote that account by email:
+### Provision an administrator
+
+Register and verify the account first, then run:
 
 ```powershell
 $env:DATABASE_URL="postgresql://..."
@@ -230,26 +181,61 @@ npm run db:migrate
 npm run db:promote-admin
 ```
 
-Sign out and sign in again so `/api/auth/me` returns the new `admin` role. The administration button then appears in the header. Local Express development can use `ADMIN_EMAIL` or a comma-separated `ADMIN_EMAILS` value without modifying the JSON account file. The browser never decides authorization: all `/api/admin/*` routes verify the authenticated role on the server.
+Sign out and sign in again so `/api/auth/me` returns the updated `admin` role. Every `/api/admin/*` endpoint checks that role on the server; hiding or showing the frontend button is not treated as authorization.
 
-## Automated quality and deployment
+## API overview
 
-`npm test` runs the frontend catalogue/cart logic suite and the Cloudflare API integration suite. GitHub Actions also runs the Drizzle schema check and production build for every pull request and production-branch push. Successful pushes deploy the verified `dist` artifact to Cloudflare Pages.
+| Area | Representative endpoints |
+| --- | --- |
+| Catalogue | `GET /api/products`, `GET /api/products/:id`, `GET /api/exchange-rate` |
+| Authentication | `POST /api/auth/register`, `GET /api/auth/verify-email`, `POST /api/auth/resend-verification`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`, `POST /api/auth/revoke-sessions` |
+| Customer account | `/api/account/profile`, `/api/account/addresses`, `/api/account/orders` |
+| Shopping data | `/api/account/favourites`, `/api/account/cart` |
+| Administration | `/api/admin/products`, `/api/admin/variants/:id`, `/api/admin/skus/:id`, `/api/admin/orders` |
+| Monitoring | `POST /api/errors/report` |
 
-Configure repository or production-environment secrets named `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` before enabling the deploy job. The token should be scoped to the `blue-orchid-web-platform` Pages project.
+`GET /api/products` supports `q`, `category`, `sale`, `inStock`, `minPrice`, `maxPrice`, `page`, and `limit` parameters.
 
-Frontend runtime errors and unhandled promise rejections are reported to `/api/errors/report`. Backend exceptions are captured by the same monitoring store. Events are saved in the managed `error_events` table with truncated diagnostic data, a hashed client IP, source, URL, user agent, and timestamp; raw IP addresses and credentials are not recorded.
+## Security model
 
-## Current Limitations
+- Production traffic is redirected to HTTPS.
+- Session identifiers are opaque values stored in `Secure`, `HttpOnly`, `SameSite=Strict` cookies.
+- Only SHA-256 session-token hashes are stored in PostgreSQL.
+- Sessions expire after seven days, track last use, and support immediate single-session or all-session revocation.
+- State-changing requests reject mismatched origins.
+- Authentication and authenticated writes use database-backed rate limiting keyed by hashed client IP.
+- Passwords are salted and hashed; raw passwords and session tokens are never stored.
+- Email verification tokens are one-time hashes with a 24-hour expiry.
+- Frontend and backend error reports truncate diagnostics and store hashed, not raw, client IP data.
 
-- No real payment gateway is connected; confirming a purchase only creates a simulated order.
-- The local Express server still uses JSON storage for development-only customer accounts, but reads products and SKU inventory from PostgreSQL.
-- Delivery-provider tracking, refunds, returns, and coupon workflows are not yet implemented.
-- EUR prices use the latest EUR/CNY reference rate supplied by Frankfurter and cached for one hour. The last successful rate is retained locally as a network-failure fallback.
-- Customer service email addresses, telephone numbers, and opening hours shown in the application are sample information.
+## Testing and deployment
 
-## Suggested Next Steps
+The `Test and deploy` GitHub Actions workflow runs on pull requests and pushes to `codex/complete-blue-orchid-store`. Its verification job performs:
 
-- Add automated database backups and recovery drills
-- Integrate payment, fulfilment, transactional order emails, and order status workflows
-- Add automated frontend and backend tests, error monitoring, and a deployment pipeline
+1. Dependency installation
+2. Frontend and backend tests
+3. Prettier formatting validation
+4. Drizzle schema validation
+5. Production build
+
+For an eligible push, the deployment job downloads the verified build artifact, applies PostgreSQL migrations, runs the non-destructive seed, and deploys to the `blue-orchid-web-platform` Cloudflare Pages project.
+
+The GitHub `production` environment must provide `DATABASE_URL`, `CLOUDFLARE_API_TOKEN`, and `CLOUDFLARE_ACCOUNT_ID`. Cloudflare must also provide the application runtime secrets and variables used by Pages Functions.
+
+## Current limitations
+
+- Checkout is simulated and does not collect or authorize payments.
+- Refunds, returns management, coupons, tax calculation, shipment tracking, and fulfilment-provider integration are not implemented.
+- Customer-service contact details and business hours are demonstration content.
+- Product imagery is hosted remotely and requires network access.
+- The Express development authentication fallback uses a local JSON file, while the deployed Cloudflare application uses PostgreSQL; those account stores are not synchronized.
+- Error events are stored in PostgreSQL, but no external alerting dashboard or notification channel is connected yet.
+
+## Suggested next steps
+
+- Integrate a payment provider using server-side payment intents and webhook verification
+- Add transactional order and shipping emails
+- Add refunds, returns, coupons, tax, and fulfilment workflows
+- Add database backup verification and recovery drills
+- Expand browser-level end-to-end tests for customer and administrator journeys
+- Connect error monitoring to an alerting and incident-management service
