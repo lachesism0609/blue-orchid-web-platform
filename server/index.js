@@ -11,6 +11,8 @@ const dataDirectory = path.join(__dirname, 'data')
 const usersFile = path.join(dataDirectory, 'users.json')
 const authSecret = process.env.AUTH_SECRET || 'blue-orchid-development-secret-change-in-production'
 const sessionDuration = 60 * 60 * 24 * 7
+const verificationDuration = 60 * 60 * 24
+const siteUrl = (process.env.SITE_URL || 'http://localhost:5173').replace(/\/$/, '')
 
 const products = [
   { id: 1, category: 'women', name: '亚麻短袖衬衫', price: 329, colors: ['#eee3d1', '#d69391', '#a8bdcf'], image: 'https://images.unsplash.com/photo-1598032895397-b9472444bf93?auto=format&fit=crop&w=750&q=85' },
@@ -79,6 +81,21 @@ function createToken(user) {
   return `${payload}.${signature}`
 }
 
+function createVerificationToken() { return crypto.randomBytes(32).toString('base64url') }
+function verificationHash(token) { return crypto.createHash('sha256').update(token).digest('base64url') }
+function escapeHtml(value) { return String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]) }
+
+async function sendVerificationEmail(user, token) {
+  const verificationUrl = `${siteUrl}/api/auth/verify-email?token=${encodeURIComponent(token)}`
+  if (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM) {
+    if (process.env.DEV_EMAIL_VERIFICATION === 'true') return { verificationUrl }
+    throw new Error('Email delivery is not configured')
+  }
+  const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from: process.env.EMAIL_FROM, to: [user.email], subject: 'Verify your Blue Orchid account', html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;padding:32px"><h1 style="color:#294887">Blue Orchid</h1><p>Hello ${escapeHtml(user.name)},</p><p>Confirm your email address to finish creating your account.</p><p><a href="${verificationUrl}">Verify email</a></p><p>This link expires in 24 hours.</p></div>` }) })
+  if (!response.ok) throw new Error(`Email delivery failed (${response.status})`)
+  return {}
+}
+
 function verifyToken(token) {
   const [payload, signature] = (token || '').split('.')
   if (!payload || !signature) return null
@@ -113,10 +130,17 @@ app.post('/api/auth/register', async (req, res, next) => {
     if (password.length < 8) return res.status(400).json({ message: '密码至少需要 8 个字符。' })
     const users = await readUsers()
     if (users.some(user => user.email === email)) return res.status(409).json({ message: '该邮箱已经注册，请直接登录。' })
-    const user = { id: crypto.randomUUID(), name, email, phone: '', addresses: [], orders: [], passwordHash: hashPassword(password), createdAt: new Date().toISOString() }
+    const verificationToken = createVerificationToken()
+    const user = { id: crypto.randomUUID(), name, email, phone: '', addresses: [], orders: [], passwordHash: hashPassword(password), emailVerified: false, verificationTokenHash: verificationHash(verificationToken), verificationExpiresAt: new Date(Date.now() + verificationDuration * 1000).toISOString(), createdAt: new Date().toISOString() }
     users.push(user)
     await writeUsers(users)
-    return res.status(201).json({ token: createToken(user), user: publicUser(user) })
+    try {
+      const delivery = await sendVerificationEmail(user, verificationToken)
+      return res.status(201).json({ message: '注册成功，请查收验证邮件。', requiresVerification: true, ...delivery })
+    } catch (error) {
+      await writeUsers(users.filter(entry => entry.id !== user.id))
+      throw error
+    }
   } catch (error) { next(error) }
 })
 
@@ -126,7 +150,40 @@ app.post('/api/auth/login', async (req, res, next) => {
     const password = String(req.body.password || '')
     const user = (await readUsers()).find(item => item.email === email)
     if (!user || !passwordMatches(password, user.passwordHash)) return res.status(401).json({ message: '邮箱或密码不正确。' })
+    if (user.emailVerified === false) return res.status(403).json({ message: '请先完成邮箱验证后再登录。', code: 'EMAIL_NOT_VERIFIED' })
     return res.json({ token: createToken(user), user: publicUser(user) })
+  } catch (error) { next(error) }
+})
+
+app.get('/api/auth/verify-email', async (req, res, next) => {
+  try {
+    const token = String(req.query.token || '')
+    const users = await readUsers()
+    const user = token ? users.find(entry => entry.verificationTokenHash === verificationHash(token)) : null
+    const valid = Boolean(user && user.verificationExpiresAt && new Date(user.verificationExpiresAt).getTime() > Date.now())
+    if (valid) {
+      Object.assign(user, { emailVerified: true, verificationTokenHash: null, verificationExpiresAt: null })
+      await writeUsers(users)
+    }
+    const title = valid ? 'Email verified' : 'Verification link invalid'
+    res.status(valid ? 200 : 400).type('html').send(`<!doctype html><html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><body style="font-family:Arial;text-align:center;padding:10vh"><h1 style="color:#294887">Blue Orchid</h1><h2>${title}</h2><p>${valid ? 'You can now sign in.' : 'Please request a new verification email.'}</p><a href="${siteUrl}/?emailVerified=${valid ? '1' : '0'}">Return to store</a></body></html>`)
+  } catch (error) { next(error) }
+})
+
+app.post('/api/auth/resend-verification', async (req, res, next) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase()
+    const users = await readUsers()
+    const user = users.find(entry => entry.email === email)
+    let delivery = {}
+    if (user && user.emailVerified === false) {
+      const token = createVerificationToken()
+      user.verificationTokenHash = verificationHash(token)
+      user.verificationExpiresAt = new Date(Date.now() + verificationDuration * 1000).toISOString()
+      await writeUsers(users)
+      delivery = await sendVerificationEmail(user, token)
+    }
+    return res.json({ message: '如果该邮箱尚未验证，我们已发送新的验证邮件。', ...delivery })
   } catch (error) { next(error) }
 })
 

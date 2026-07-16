@@ -176,7 +176,9 @@ Create a Cloudflare Pages project connected to this repository with the followin
 | Build output directory | `dist` |
 | Root directory | `/` |
 
-Create a D1 database, execute `migrations/0001_initial.sql`, and bind it to the Pages project using the variable name `DB`. Also create an encrypted Pages secret named `AUTH_SECRET` with a long random value. Redeploy the project after adding or changing bindings.
+Create a D1 database, execute `migrations/0001_initial.sql` followed by `migrations/0002_email_verification.sql`, and bind it to the Pages project using the variable name `DB`. Also create encrypted Pages secrets named `AUTH_SECRET` and `RESEND_API_KEY`, plus the `EMAIL_FROM` and `SITE_URL` variables. `EMAIL_FROM` must use a sender/domain verified in Resend; `SITE_URL` must be the public Pages origin such as `https://blue-orchid-web-platform.pages.dev`. Redeploy the project after adding or changing bindings.
+
+New customers receive a one-time verification link that expires after 24 hours. Login is blocked until verification succeeds, and the login dialog can resend the message. For development demonstrations, `DEV_EMAIL_VERIFICATION=true` returns the verification URL in the registration response and displays a demo verification button when email delivery is not configured. Do not enable this variable for a public production store.
 
 The original Express server remains available for local development through `npm run dev`. Local Express data and production Cloudflare D1 data are independent and are not synchronized automatically.
 
@@ -193,5 +195,5 @@ The original Express server remains available for local development through `npm
 - Introduce PostgreSQL, MySQL, or MongoDB with a managed schema and migration process
 - Use HTTPS, secure cookies, request rate limiting, and stronger session revocation controls
 - Add product details, search, filtering, pagination, and inventory validation
-- Integrate payment, fulfilment, email notifications, and order status workflows
+- Integrate payment, fulfilment, transactional order emails, and order status workflows
 - Add automated frontend and backend tests, error monitoring, and a deployment pipeline

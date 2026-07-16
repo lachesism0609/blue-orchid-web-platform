@@ -43,6 +43,9 @@ function App() {
   const [authOpen, setAuthOpen] = useState(false)
   const [authMode, setAuthMode] = useState('login')
   const [authError, setAuthError] = useState('')
+  const [authNotice, setAuthNotice] = useState('')
+  const [pendingVerificationEmail, setPendingVerificationEmail] = useState('')
+  const [developmentVerificationUrl, setDevelopmentVerificationUrl] = useState('')
   const [authLoading, setAuthLoading] = useState(false)
   const [authUser, setAuthUser] = useState(() => { try { return JSON.parse(localStorage.getItem('blue-orchid-user')) } catch { return null } })
   const [accountPage, setAccountPage] = useState(() => window.location.hash === '#account')
@@ -76,6 +79,12 @@ function App() {
   useEffect(() => { if (cartPage) setAboutPage(false) }, [cartPage])
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(''), 2400); return () => clearTimeout(timer) }, [toast])
   useEffect(() => {
+    const status = new URLSearchParams(window.location.search).get('emailVerified')
+    if (!status) return
+    setToast(status === '1' ? (lang === 'zh' ? '邮箱验证成功，现在可以登录。' : 'Email verified. You can now sign in.') : (lang === 'zh' ? '验证链接无效或已过期。' : 'The verification link is invalid or expired.'))
+    window.history.replaceState(null, '', window.location.pathname + window.location.hash)
+  }, [])
+  useEffect(() => {
     const shouldLockScroll = Boolean(catalogPage || aboutPage || accountPage || favouritesPage || cartPage || authOpen)
     document.body.style.overflow = shouldLockScroll ? 'hidden' : ''
     return () => { document.body.style.overflow = '' }
@@ -108,7 +117,7 @@ function App() {
   const shippingText = lang === 'zh' ? `订单满 ${formatPrice(399)} 享免费配送` : `Free shipping on orders over ${formatPrice(399)}`
   const openAuth = () => { if (authUser && cartPage) { handleCheckout(); return }; setAuthError(''); setAuthOpen(true) }
   const submitAuth = async event => {
-    event.preventDefault(); setAuthError(''); setAuthLoading(true)
+    event.preventDefault(); setAuthError(''); setAuthNotice(''); setAuthLoading(true)
     const form = new FormData(event.currentTarget)
     const body = { email: form.get('email'), password: form.get('password'), ...(authMode === 'register' ? { name: form.get('name') } : {}) }
     try {
@@ -117,12 +126,30 @@ function App() {
       const data = isJson ? await response.json() : null
       if (!isJson) throw new Error(lang === 'zh' ? '认证服务尚未启动，请重启开发服务后重试。' : 'The authentication service is unavailable. Please restart the development server.')
       if (!response.ok) throw new Error(data.message || 'Request failed')
+      if (authMode === 'register' && data.requiresVerification) {
+        setPendingVerificationEmail(body.email)
+        setDevelopmentVerificationUrl(data.verificationUrl || '')
+        setAuthNotice(lang === 'zh' ? '验证邮件已发送，请前往邮箱完成验证后再登录。' : 'Verification email sent. Verify your address before signing in.')
+        setAuthMode('login')
+        return
+      }
       localStorage.setItem('blue-orchid-token', data.token); localStorage.setItem('blue-orchid-user', JSON.stringify(data.user)); setAuthUser(data.user); setAuthOpen(false)
       if (cartPage) {
         const addressData = await accountRequest('/api/account/addresses')
         if (addressData.addresses.length) { setCheckoutAddresses(addressData.addresses); setSelectedAddressId(addressData.addresses[0].id); setCheckoutStage('confirm') }
         else setToast(lang === 'zh' ? '请先在个人主页添加收货地址。' : 'Please add a delivery address first.')
       }
+    } catch (error) { setAuthError(error.message) } finally { setAuthLoading(false) }
+  }
+  const resendVerification = async () => {
+    if (!pendingVerificationEmail) return
+    setAuthLoading(true); setAuthError(''); setAuthNotice('')
+    try {
+      const response = await fetch('/api/auth/resend-verification', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: pendingVerificationEmail }) })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.message || 'Request failed')
+      setDevelopmentVerificationUrl(data.verificationUrl || '')
+      setAuthNotice(lang === 'zh' ? '新的验证邮件已发送。' : 'A new verification email has been sent.')
     } catch (error) { setAuthError(error.message) } finally { setAuthLoading(false) }
   }
   const logout = () => { localStorage.removeItem('blue-orchid-token'); localStorage.removeItem('blue-orchid-user'); setAuthUser(null) }
@@ -209,7 +236,7 @@ function App() {
     {toast && <div className="favourite-toast"><Icon name="heart" size={17}/>{toast}</div>}
     {authUser && accountPage && <div className="account-page"><div className="account-shell"><button className="account-close" onClick={closeAccount}>← {lang === 'zh' ? '返回商城' : 'Back to store'}</button><aside className="account-sidebar"><p>BLUE ORCHID</p><h2>{lang === 'zh' ? '我的账户' : 'My account'}</h2><span>{authUser.name}</span><div>{[['orders', lang === 'zh' ? '订单历史' : 'Order history'], ['addresses', lang === 'zh' ? '地址管理' : 'Addresses'], ['profile', lang === 'zh' ? '个人信息' : 'Personal details']].map(([id, label]) => <button key={id} className={accountTab === id ? 'active' : ''} onClick={() => { setAccountTab(id); setAccountNotice('') }}>{label}</button>)}</div><button className="account-logout" onClick={() => { logout(); closeAccount() }}>{lang === 'zh' ? '退出登录' : 'Sign out'}</button></aside><section className="account-content">{accountNotice && <p className="account-notice">{accountNotice}</p>}{accountTab === 'orders' && <><h1>{lang === 'zh' ? '订单历史' : 'Order history'}</h1>{accountData.orders.length ? <div className="orders-list">{accountData.orders.map(order => <article key={order.id}><span>{order.id}</span><strong>{formatPrice(order.total)}</strong><small>{order.status}</small></article>)}</div> : <div className="account-empty"><h3>{lang === 'zh' ? '还没有订单' : 'No orders yet'}</h3><p>{lang === 'zh' ? '您的订单将在这里显示。' : 'Your future orders will appear here.'}</p><button onClick={closeAccount}>{lang === 'zh' ? '开始选购' : 'Start shopping'}</button></div>}</>}{accountTab === 'addresses' && <><h1>{lang === 'zh' ? '地址管理' : 'Addresses'}</h1><div className="address-list">{accountData.addresses.map(address => <article key={address.id}><strong>{address.recipient}</strong><span>{address.phone}</span><p>{address.line1}<br/>{address.city} {address.postcode}<br/>{address.country}</p><button onClick={() => deleteAddress(address.id)}>{lang === 'zh' ? '删除' : 'Remove'}</button></article>)}</div><form className="address-form" onSubmit={addAddress}><h3>{lang === 'zh' ? '添加新地址' : 'Add a new address'}</h3><div><input name="recipient" placeholder={lang === 'zh' ? '收件人' : 'Recipient'} required/><input name="phone" placeholder={lang === 'zh' ? '电话' : 'Phone'} required/></div><input name="line1" placeholder={lang === 'zh' ? '详细地址' : 'Address line'} required/><div><input name="city" placeholder={lang === 'zh' ? '城市' : 'City'} required/><input name="postcode" placeholder={lang === 'zh' ? '邮编' : 'Postcode'} required/></div><input name="country" placeholder={lang === 'zh' ? '国家/地区' : 'Country / region'} required/><button>{lang === 'zh' ? '保存地址' : 'Save address'}</button></form></>}{accountTab === 'profile' && <><h1>{lang === 'zh' ? '个人信息' : 'Personal details'}</h1><form className="profile-form" onSubmit={saveProfile}><label>{lang === 'zh' ? '姓名' : 'Name'}<input name="name" defaultValue={authUser.name} required minLength="2"/></label><label>{lang === 'zh' ? '邮箱' : 'Email'}<input value={authUser.email} disabled/></label><label>{lang === 'zh' ? '电话' : 'Phone'}<input name="phone" defaultValue={authUser.phone}/></label><button>{lang === 'zh' ? '保存更改' : 'Save changes'}</button></form></>}</section></div></div>}
     {selectedOrder && <div className="order-detail-backdrop" onMouseDown={() => setSelectedOrder(null)}><section className="order-detail" onMouseDown={event => event.stopPropagation()}><button className="order-detail-close" onClick={() => setSelectedOrder(null)}>×</button><p className="auth-kicker">BLUE ORCHID</p><div className="order-detail-heading"><div><h2>{lang === 'zh' ? '订单详情' : 'Order details'}</h2><span>{selectedOrder.id}</span></div><strong>{selectedOrder.status}</strong></div><div className="order-meta"><p><span>{lang === 'zh' ? '下单时间' : 'Order date'}</span><strong>{selectedOrder.createdAt ? new Intl.DateTimeFormat(lang === 'zh' ? 'zh-CN' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(selectedOrder.createdAt)) : '—'}</strong></p><p><span>{lang === 'zh' ? '订单总额' : 'Order total'}</span><strong>{formatPrice(selectedOrder.total)}</strong></p></div><h3>{lang === 'zh' ? '商品明细' : 'Items'}</h3><div className="order-detail-items">{(selectedOrder.items || []).map(item => <article key={item.productId}><img src={products.find(product => product.id === item.productId)?.image || ''} alt=""/><div><strong>{productNames[item.productId]?.[lang === 'zh' ? 0 : 1] || item.name}</strong><span>{lang === 'zh' ? '数量' : 'Qty'} × {item.quantity}</span></div><p><span>{formatPrice(item.unitPrice)} × {item.quantity}</span><strong>{formatPrice(item.unitPrice * item.quantity)}</strong></p></article>)}</div>{selectedOrder.address && <><h3>{lang === 'zh' ? '收货地址' : 'Delivery address'}</h3><address><strong>{selectedOrder.address.recipient}</strong><span>{selectedOrder.address.phone}</span><p>{selectedOrder.address.line1}<br/>{selectedOrder.address.city} {selectedOrder.address.postcode}<br/>{selectedOrder.address.country}</p></address></>}</section></div>}
-    {authOpen && <div className="auth-backdrop" onMouseDown={() => setAuthOpen(false)}><section className="auth-dialog" onMouseDown={event => event.stopPropagation()}><button className="auth-close" onClick={() => setAuthOpen(false)} aria-label="Close">×</button><p className="auth-kicker">BLUE ORCHID</p><h2>{authMode === 'login' ? (lang === 'zh' ? '欢迎回来' : 'Welcome back') : (lang === 'zh' ? '创建账户' : 'Create an account')}</h2><p className="auth-caption">{authMode === 'login' ? (lang === 'zh' ? '登录以查看您的专属内容。' : 'Sign in to view your account.') : (lang === 'zh' ? '注册后即可保存心仪商品。' : 'Create an account to save your favourites.')}</p><form onSubmit={submitAuth}>{authMode === 'register' && <label>{lang === 'zh' ? '姓名' : 'Name'}<input name="name" required minLength="2" autoComplete="name" /></label>}<label>{lang === 'zh' ? '邮箱' : 'Email'}<input name="email" type="email" required autoComplete="email" /></label><label>{lang === 'zh' ? '密码' : 'Password'}<input name="password" type="password" required minLength="8" autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} /></label>{authError && <p className="auth-error">{authError}</p>}<button className="auth-submit" disabled={authLoading}>{authLoading ? (lang === 'zh' ? '请稍候…' : 'Please wait…') : (authMode === 'login' ? (lang === 'zh' ? '登录' : 'Sign in') : (lang === 'zh' ? '注册' : 'Create account'))}</button></form><button className="auth-switch" onClick={() => { setAuthMode(current => current === 'login' ? 'register' : 'login'); setAuthError('') }}>{authMode === 'login' ? (lang === 'zh' ? '还没有账户？立即注册' : 'New here? Create an account') : (lang === 'zh' ? '已有账户？直接登录' : 'Already have an account? Sign in')}</button></section></div>}
+    {authOpen && <div className="auth-backdrop" onMouseDown={() => setAuthOpen(false)}><section className="auth-dialog" onMouseDown={event => event.stopPropagation()}><button className="auth-close" onClick={() => setAuthOpen(false)} aria-label="Close">×</button><p className="auth-kicker">BLUE ORCHID</p><h2>{authMode === 'login' ? (lang === 'zh' ? '欢迎回来' : 'Welcome back') : (lang === 'zh' ? '创建账户' : 'Create an account')}</h2><p className="auth-caption">{authMode === 'login' ? (lang === 'zh' ? '登录以查看您的专属内容。' : 'Sign in to view your account.') : (lang === 'zh' ? '注册后将生成邮箱验证链接。' : 'A verification link will be generated after registration.')}</p><form onSubmit={submitAuth}>{authMode === 'register' && <label>{lang === 'zh' ? '姓名' : 'Name'}<input name="name" required minLength="2" autoComplete="name" /></label>}<label>{lang === 'zh' ? '邮箱' : 'Email'}<input name="email" type="email" required autoComplete="email" defaultValue={pendingVerificationEmail} /></label><label>{lang === 'zh' ? '密码' : 'Password'}<input name="password" type="password" required minLength="8" autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} /></label>{authNotice && <p className="auth-notice">{authNotice}</p>}{developmentVerificationUrl && <a className="auth-dev-verify" href={developmentVerificationUrl}>{lang === 'zh' ? '开发演示：验证此邮箱' : 'Demo: verify this email'}</a>}{authError && <p className="auth-error">{authError}</p>}{pendingVerificationEmail && authMode === 'login' && <button type="button" className="auth-resend" onClick={resendVerification} disabled={authLoading}>{lang === 'zh' ? '重新生成验证链接' : 'Generate a new verification link'}</button>}<button className="auth-submit" disabled={authLoading}>{authLoading ? (lang === 'zh' ? '请稍候…' : 'Please wait…') : (authMode === 'login' ? (lang === 'zh' ? '登录' : 'Sign in') : (lang === 'zh' ? '注册' : 'Create account'))}</button></form><button className="auth-switch" onClick={() => { setAuthMode(current => current === 'login' ? 'register' : 'login'); setAuthError(''); setAuthNotice(''); setDevelopmentVerificationUrl('') }}>{authMode === 'login' ? (lang === 'zh' ? '还没有账户？立即注册' : 'New here? Create an account') : (lang === 'zh' ? '已有账户？直接登录' : 'Already have an account? Sign in')}</button></section></div>}
   </>
 }
 createRoot(document.getElementById('root')).render(<App />)

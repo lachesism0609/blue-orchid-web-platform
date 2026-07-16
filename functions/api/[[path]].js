@@ -1,5 +1,6 @@
 const textEncoder = new TextEncoder()
 const sessionDuration = 60 * 60 * 24 * 7
+const verificationDuration = 60 * 60 * 24
 const passwordIterations = 100000
 
 const products = [
@@ -105,6 +106,44 @@ async function verifyToken(token, secret) {
   } catch { return null }
 }
 
+async function sha256(value) {
+  const digest = await crypto.subtle.digest('SHA-256', textEncoder.encode(value))
+  return bytesToBase64url(new Uint8Array(digest))
+}
+
+function siteUrl(request, env) {
+  return String(env.SITE_URL || new URL(request.url).origin).replace(/\/$/, '')
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character])
+}
+
+async function issueVerification(user, request, env) {
+  const token = bytesToBase64url(crypto.getRandomValues(new Uint8Array(32)))
+  const tokenHash = await sha256(token)
+  const expiresAt = new Date(Date.now() + verificationDuration * 1000).toISOString()
+  await env.DB.prepare('UPDATE users SET verification_token_hash = ?, verification_expires_at = ? WHERE id = ?').bind(tokenHash, expiresAt, user.id).run()
+  const verificationUrl = `${siteUrl(request, env)}/api/auth/verify-email?token=${encodeURIComponent(token)}`
+  if (!env.RESEND_API_KEY || !env.EMAIL_FROM) {
+    if (env.DEV_EMAIL_VERIFICATION === 'true') return { verificationUrl }
+    throw new Error('Email delivery is not configured')
+  }
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from: env.EMAIL_FROM, to: [user.email], subject: 'Verify your Blue Orchid account', html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;padding:32px;color:#202020"><h1 style="color:#294887">Blue Orchid</h1><p>Hello ${escapeHtml(user.name)},</p><p>Confirm your email address to finish creating your account.</p><p><a href="${verificationUrl}" style="display:inline-block;padding:12px 22px;background:#294887;color:white;text-decoration:none">Verify email</a></p><p>This link expires in 24 hours. If you did not create this account, you can ignore this email.</p></div>` })
+  })
+  if (!response.ok) throw new Error(`Email delivery failed (${response.status})`)
+  return {}
+}
+
+function verificationPage(success, origin) {
+  const title = success ? 'Email verified' : 'Verification link invalid'
+  const message = success ? 'Your email has been verified. You can now sign in.' : 'This verification link is invalid or has expired. Please request a new one.'
+  return new Response(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${title}</title></head><body style="margin:0;background:#f7f7f4;font-family:Arial,sans-serif;color:#202020"><main style="max-width:520px;margin:12vh auto;background:white;padding:48px;text-align:center"><h1 style="color:#294887">Blue Orchid</h1><h2>${title}</h2><p style="line-height:1.6">${message}</p><a href="${origin}/?emailVerified=${success ? '1' : '0'}" style="display:inline-block;margin-top:16px;padding:12px 24px;background:#202020;color:white;text-decoration:none">Return to store</a></main></body></html>`, { status: success ? 200 : 400, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } })
+}
+
 function publicUser(user) {
   return { id: user.id, name: user.name, email: user.email, phone: user.phone || '', createdAt: user.created_at }
 }
@@ -172,10 +211,32 @@ export async function onRequest({ request, env, params }) {
       const id = crypto.randomUUID()
       const createdAt = new Date().toISOString()
       const passwordData = await passwordHash(password)
-      await env.DB.prepare('INSERT INTO users (id, name, email, phone, password_hash, password_salt, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      await env.DB.prepare('INSERT INTO users (id, name, email, phone, password_hash, password_salt, email_verified, created_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?)')
         .bind(id, name, email, '', passwordData.hash, passwordData.salt, createdAt).run()
       const user = { id, name, email, phone: '', created_at: createdAt }
-      return json({ token: await createToken(user, env.AUTH_SECRET), user: publicUser(user) }, 201)
+      try {
+        const delivery = await issueVerification(user, request, env)
+        return json({ message: '注册成功，请查收验证邮件。', requiresVerification: true, ...delivery }, 201)
+      } catch (error) {
+        await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id).run()
+        throw error
+      }
+    }
+
+    if (method === 'GET' && route === 'auth/verify-email') {
+      const token = new URL(request.url).searchParams.get('token') || ''
+      const user = token ? await env.DB.prepare('SELECT * FROM users WHERE verification_token_hash = ?').bind(await sha256(token)).first() : null
+      const valid = Boolean(user && user.verification_expires_at && new Date(user.verification_expires_at).getTime() > Date.now())
+      if (valid) await env.DB.prepare('UPDATE users SET email_verified = 1, verification_token_hash = NULL, verification_expires_at = NULL WHERE id = ?').bind(user.id).run()
+      return verificationPage(valid, siteUrl(request, env))
+    }
+
+    if (method === 'POST' && route === 'auth/resend-verification') {
+      const body = await requestBody(request)
+      const email = String(body.email || '').trim().toLowerCase()
+      const user = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first()
+      const delivery = user && !user.email_verified ? await issueVerification(user, request, env) : {}
+      return json({ message: '如果该邮箱尚未验证，我们已发送新的验证邮件。', ...delivery })
     }
 
     if (method === 'POST' && route === 'auth/login') {
@@ -184,6 +245,7 @@ export async function onRequest({ request, env, params }) {
       const password = String(body.password || '')
       const user = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first()
       if (!user || !(await passwordMatches(password, user.password_hash, user.password_salt))) return json({ message: '邮箱或密码不正确。' }, 401)
+      if (!user.email_verified) return json({ message: '请先完成邮箱验证后再登录。', code: 'EMAIL_NOT_VERIFIED' }, 403)
       return json({ token: await createToken(user, env.AUTH_SECRET), user: publicUser(user) })
     }
 
