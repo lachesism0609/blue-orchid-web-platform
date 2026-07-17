@@ -4,6 +4,7 @@ const tabs = {
   orders: ["订单历史", "Order history"],
   addresses: ["地址管理", "Addresses"],
   profile: ["个人信息", "Personal details"],
+  security: ["登录设备", "Login devices"],
 };
 
 export default function AccountPage({
@@ -21,10 +22,19 @@ export default function AccountPage({
   onDeleteAddress,
   onAddAddress,
   onSaveProfile,
+  onRevokeSession,
+  onRevokeOtherSessions,
 }) {
   if (!open || !user) return null;
   const zh = lang === "zh";
   const label = (key) => tabs[key][zh ? 0 : 1];
+  const formatDate = (value) =>
+    value
+      ? new Intl.DateTimeFormat(zh ? "zh-CN" : "en-GB", {
+          dateStyle: "medium",
+          timeStyle: "short",
+        }).format(new Date(value))
+      : "—";
 
   return (
     <div className="account-page">
@@ -174,6 +184,63 @@ export default function AccountPage({
                 </label>
                 <button>{zh ? "保存更改" : "Save changes"}</button>
               </form>
+            </>
+          )}
+          {tab === "security" && (
+            <>
+              <div className="security-heading">
+                <div>
+                  <h1>{label("security")}</h1>
+                  <p>
+                    {zh
+                      ? "查看当前登录设备，并撤销不再使用的 Session。"
+                      : "Review signed-in devices and revoke sessions you no longer use."}
+                  </p>
+                </div>
+                {(data.sessions || []).filter((session) => !session.current)
+                  .length > 0 && (
+                  <button onClick={onRevokeOtherSessions}>
+                    {zh ? "退出其他设备" : "Sign out other devices"}
+                  </button>
+                )}
+              </div>
+              <div className="session-list">
+                {(data.sessions || []).map((session) => (
+                  <article key={session.id}>
+                    <div className="session-icon" aria-hidden="true">
+                      ◫
+                    </div>
+                    <div>
+                      <strong>{session.device}</strong>
+                      {session.current && (
+                        <b>{zh ? "当前设备" : "Current device"}</b>
+                      )}
+                      <span>{session.ipAddress}</span>
+                      <small>
+                        {zh ? "最近活动" : "Last active"}：
+                        {formatDate(session.lastSeenAt)}
+                      </small>
+                      <small>
+                        {zh ? "到期时间" : "Expires"}：
+                        {formatDate(session.expiresAt)}
+                      </small>
+                    </div>
+                    <button
+                      onClick={() =>
+                        onRevokeSession(session.id, session.current)
+                      }
+                    >
+                      {session.current
+                        ? zh
+                          ? "退出此设备"
+                          : "Sign out here"
+                        : zh
+                          ? "撤销"
+                          : "Revoke"}
+                    </button>
+                  </article>
+                ))}
+              </div>
             </>
           )}
         </section>

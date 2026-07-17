@@ -100,6 +100,25 @@ class AuthDatabase {
                     )?.position,
                   })),
               };
+            if (
+              sql ===
+              "SELECT * FROM sessions WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ? ORDER BY last_seen_at DESC"
+            )
+              return {
+                results: database.sessions
+                  .filter(
+                    (entry) =>
+                      entry.user_id === values[0] &&
+                      !entry.revoked_at &&
+                      new Date(entry.expires_at).getTime() >
+                        new Date(values[1]).getTime(),
+                  )
+                  .sort(
+                    (left, right) =>
+                      new Date(right.last_seen_at) -
+                      new Date(left.last_seen_at),
+                  ),
+              };
             throw new Error(`Unexpected all query: ${sql}`);
           },
           async first() {
@@ -124,10 +143,30 @@ class AuthDatabase {
                   (entry) => entry.verification_token_hash === values[0],
                 ) || null
               );
+            if (
+              sql === "SELECT * FROM users WHERE password_reset_token_hash = ?"
+            )
+              return (
+                database.users.find(
+                  (entry) => entry.password_reset_token_hash === values[0],
+                ) || null
+              );
             if (sql === "SELECT * FROM sessions WHERE token_hash = ?")
               return (
                 database.sessions.find(
                   (entry) => entry.token_hash === values[0],
+                ) || null
+              );
+            if (
+              sql ===
+              "SELECT * FROM sessions WHERE id = ? AND user_id = ? AND revoked_at IS NULL"
+            )
+              return (
+                database.sessions.find(
+                  (entry) =>
+                    entry.id === values[0] &&
+                    entry.user_id === values[1] &&
+                    !entry.revoked_at,
                 ) || null
               );
             if (sql === "SELECT * FROM rate_limits WHERE key = ?")
@@ -210,6 +249,26 @@ class AuthDatabase {
                 verification_token_hash: null,
                 verification_expires_at: null,
               });
+            } else if (
+              sql.startsWith("UPDATE users SET password_reset_token_hash")
+            ) {
+              const user = database.users.find(
+                (entry) => entry.id === values[2],
+              );
+              Object.assign(user, {
+                password_reset_token_hash: values[0],
+                password_reset_expires_at: values[1],
+              });
+            } else if (sql.startsWith("UPDATE users SET password_hash")) {
+              const user = database.users.find(
+                (entry) => entry.id === values[2],
+              );
+              Object.assign(user, {
+                password_hash: values[0],
+                password_salt: values[1],
+                password_reset_token_hash: null,
+                password_reset_expires_at: null,
+              });
             } else if (sql.startsWith("DELETE FROM users")) {
               database.users = database.users.filter(
                 (entry) => entry.id !== values[0],
@@ -242,13 +301,22 @@ class AuthDatabase {
               );
               session.last_seen_at = values[0];
             } else if (sql.startsWith("UPDATE sessions SET revoked_at")) {
-              for (const session of database.sessions)
-                if (
-                  (sql.includes("token_hash") &&
-                    session.token_hash === values[1]) ||
-                  (sql.includes("user_id") && session.user_id === values[1])
-                )
-                  session.revoked_at = values[0];
+              for (const session of database.sessions) {
+                const matches = sql.includes("token_hash <> ?")
+                  ? session.user_id === values[1] &&
+                    session.token_hash !== values[2] &&
+                    !session.revoked_at
+                  : sql.includes("WHERE id = ?")
+                    ? session.id === values[1] &&
+                      session.user_id === values[2] &&
+                      !session.revoked_at
+                    : sql.includes("token_hash = ?")
+                      ? session.token_hash === values[1]
+                      : sql.includes("user_id = ?")
+                        ? session.user_id === values[1]
+                        : false;
+                if (matches) session.revoked_at = values[0];
+              }
             } else if (sql.startsWith("INSERT INTO rate_limits")) {
               database.rateLimits.set(values[0], {
                 key: values[0],
@@ -359,7 +427,7 @@ const env = () => ({
 function context(
   databaseEnv,
   path,
-  { method = "GET", body, token, cookie, protocol = "https:" } = {},
+  { method = "GET", body, token, cookie, protocol = "https:", userAgent } = {},
 ) {
   return {
     env: databaseEnv,
@@ -370,6 +438,7 @@ function context(
         ...(body ? { "Content-Type": "application/json" } : {}),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(cookie ? { Cookie: cookie } : {}),
+        ...(userAgent ? { "User-Agent": userAgent } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
     }),
@@ -576,6 +645,131 @@ test("registers, verifies email, logs in, rejects a bad password, and validates 
   assert.match(logout.headers.get("set-cookie"), /Max-Age=0/);
   const revoked = await onRequest(context(databaseEnv, "auth/me", { cookie }));
   assert.equal(revoked.status, 401);
+});
+
+test("resets a forgotten password and manages device sessions", async () => {
+  const databaseEnv = env();
+  const credentials = {
+    name: "Session User",
+    email: "sessions@example.com",
+    password: "initial-password-123",
+  };
+  const registration = await onRequest(
+    context(databaseEnv, "auth/register", {
+      method: "POST",
+      body: credentials,
+    }),
+  );
+  const verificationToken = new URL(
+    (await registration.json()).verificationUrl,
+  ).searchParams.get("token");
+  await onRequest({
+    ...context(databaseEnv, "auth/verify-email"),
+    request: new Request(
+      `https://blue-orchid.pages.dev/api/auth/verify-email?token=${verificationToken}`,
+    ),
+  });
+
+  const login = async (userAgent, password = credentials.password) => {
+    const response = await onRequest(
+      context(databaseEnv, "auth/login", {
+        method: "POST",
+        userAgent,
+        body: { email: credentials.email, password },
+      }),
+    );
+    return {
+      response,
+      cookie: response.headers.get("set-cookie")?.split(";")[0],
+    };
+  };
+
+  const first = await login(
+    "Mozilla/5.0 (Windows NT 10.0) Chrome/126.0 Safari/537.36",
+  );
+  const second = await login("Mozilla/5.0 (X11; Linux x86_64) Firefox/128.0");
+  assert.equal(first.response.status, 200);
+  assert.equal(second.response.status, 200);
+
+  const sessionResponse = await onRequest(
+    context(databaseEnv, "account/sessions", { cookie: first.cookie }),
+  );
+  const sessionBody = await sessionResponse.json();
+  assert.equal(sessionBody.sessions.length, 2);
+  assert.equal(
+    sessionBody.sessions.filter((session) => session.current).length,
+    1,
+  );
+  assert.match(
+    sessionBody.sessions.find((session) => session.current).device,
+    /Chrome · Windows/,
+  );
+
+  const otherSession = sessionBody.sessions.find((session) => !session.current);
+  const revokeOne = await onRequest(
+    context(databaseEnv, `account/sessions/${otherSession.id}`, {
+      method: "DELETE",
+      cookie: first.cookie,
+    }),
+  );
+  assert.equal(revokeOne.status, 200);
+  assert.equal(
+    (
+      await onRequest(
+        context(databaseEnv, "auth/me", { cookie: second.cookie }),
+      )
+    ).status,
+    401,
+  );
+
+  const third = await login("Mozilla/5.0 (Macintosh) Safari/605.1");
+  assert.equal(third.response.status, 200);
+
+  const revokeOthers = await onRequest(
+    context(databaseEnv, "account/sessions/revoke-others", {
+      method: "POST",
+      cookie: first.cookie,
+    }),
+  );
+  assert.equal(revokeOthers.status, 200);
+  assert.equal(
+    (await onRequest(context(databaseEnv, "auth/me", { cookie: third.cookie })))
+      .status,
+    401,
+  );
+  assert.equal(
+    (await onRequest(context(databaseEnv, "auth/me", { cookie: first.cookie })))
+      .status,
+    200,
+  );
+
+  const forgot = await onRequest(
+    context(databaseEnv, "auth/forgot-password", {
+      method: "POST",
+      body: { email: credentials.email },
+    }),
+  );
+  const resetUrl = (await forgot.json()).resetUrl;
+  assert.ok(resetUrl);
+  const resetToken = new URL(resetUrl).searchParams.get("resetToken");
+  const newPassword = "new-password-456";
+  const reset = await onRequest(
+    context(databaseEnv, "auth/reset-password", {
+      method: "POST",
+      body: { token: resetToken, password: newPassword },
+    }),
+  );
+  assert.equal(reset.status, 200);
+  assert.equal(
+    (await onRequest(context(databaseEnv, "auth/me", { cookie: first.cookie })))
+      .status,
+    401,
+  );
+  assert.equal(
+    (await login("Chrome", credentials.password)).response.status,
+    401,
+  );
+  assert.equal((await login("Chrome", newPassword)).response.status, 200);
 });
 
 test("redirects non-local HTTP requests to HTTPS", async () => {

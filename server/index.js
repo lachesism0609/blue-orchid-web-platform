@@ -16,6 +16,7 @@ const authSecret = process.env.AUTH_SECRET || 'blue-orchid-development-secret-ch
 const sessionDuration = 60 * 60 * 24 * 7
 const sessionCookie = 'blue_orchid_session'
 const verificationDuration = 60 * 60 * 24
+const passwordResetDuration = 60 * 60
 const siteUrl = (process.env.SITE_URL || 'http://localhost:5173').replace(/\/$/, '')
 const database = createDatabase(process.env)
 const adminEmails = new Set(
@@ -56,10 +57,11 @@ function passwordMatches(password, storedHash) {
 function base64url(value) {
   return Buffer.from(value).toString('base64url')
 }
-function createToken(user) {
+function createToken(user, sessionId) {
   const payload = base64url(
     JSON.stringify({
       sub: user.id,
+      sid: sessionId,
       exp: Math.floor(Date.now() / 1000) + sessionDuration,
     }),
   )
@@ -100,6 +102,49 @@ async function sendVerificationEmail(user, token) {
   return {}
 }
 
+async function sendPasswordResetEmail(user, token) {
+  const resetUrl = `${siteUrl}/?resetToken=${encodeURIComponent(token)}`
+  if (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM) {
+    if (process.env.DEV_EMAIL_VERIFICATION === 'true') return { resetUrl }
+    throw new Error('Email delivery is not configured')
+  }
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: process.env.EMAIL_FROM,
+      to: [user.email],
+      subject: 'Reset your Blue Orchid password',
+      html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;padding:32px"><h1 style="color:#294887">Blue Orchid</h1><p>Hello ${escapeHtml(user.name)},</p><p>Use the link below to choose a new password.</p><p><a href="${resetUrl}">Reset password</a></p><p>This link expires in one hour and can only be used once.</p></div>`,
+    }),
+  })
+  if (!response.ok) throw new Error(`Email delivery failed (${response.status})`)
+  return {}
+}
+
+function sessionDevice(userAgent) {
+  const agent = String(userAgent || '')
+  const browser = /Edg\//.test(agent) ? 'Edge' : /Firefox\//.test(agent) ? 'Firefox' : /Chrome\//.test(agent) ? 'Chrome' : /Safari\//.test(agent) ? 'Safari' : 'Browser'
+  const platform = /Windows/i.test(agent) ? 'Windows' : /Android/i.test(agent) ? 'Android' : /iPhone|iPad/i.test(agent) ? 'iOS' : /Mac OS/i.test(agent) ? 'macOS' : /Linux/i.test(agent) ? 'Linux' : 'Unknown device'
+  return `${browser} · ${platform}`
+}
+
+function publicLocalSession(session, currentId) {
+  return {
+    id: session.id,
+    device: sessionDevice(session.userAgent),
+    userAgent: session.userAgent,
+    ipAddress: session.ipAddress,
+    createdAt: session.createdAt,
+    lastSeenAt: session.lastSeenAt,
+    expiresAt: session.expiresAt,
+    current: session.id === currentId,
+  }
+}
+
 function verifyToken(token) {
   const [payload, signature] = (token || '').split('.')
   if (!payload || !signature) return null
@@ -132,9 +177,15 @@ const requireAuth = async (req, res, next) => {
   const token = cookies[sessionCookie] || req.headers.authorization?.replace(/^Bearer\s+/i, '')
   const payload = verifyToken(token)
   if (!payload) return res.status(401).json({ message: '请先登录后再继续。' })
-  const user = (await readUsers()).find((item) => item.id === payload.sub)
+  const users = await readUsers()
+  const user = users.find((item) => item.id === payload.sub)
   if (!user) return res.status(401).json({ message: '登录状态无效，请重新登录。' })
+  const session = (user.sessions || []).find((entry) => entry.id === payload.sid && !entry.revokedAt && new Date(entry.expiresAt).getTime() > Date.now())
+  if (!session) return res.status(401).json({ message: '登录状态无效，请重新登录。' })
+  session.lastSeenAt = new Date().toISOString()
+  await writeUsers(users)
   req.user = user
+  req.session = session
   next()
 }
 const requireAdmin = (req, res, next) => {
@@ -220,14 +271,28 @@ app.post('/api/auth/login', async (req, res, next) => {
       .trim()
       .toLowerCase()
     const password = String(req.body.password || '')
-    const user = (await readUsers()).find((item) => item.email === email)
+    const users = await readUsers()
+    const user = users.find((item) => item.email === email)
     if (!user || !passwordMatches(password, user.passwordHash)) return res.status(401).json({ message: '邮箱或密码不正确。' })
     if (user.emailVerified === false)
       return res.status(403).json({
         message: '请先完成邮箱验证后再登录。',
         code: 'EMAIL_NOT_VERIFIED',
       })
-    res.cookie(sessionCookie, createToken(user), {
+    const now = new Date().toISOString()
+    const session = {
+      id: crypto.randomUUID(),
+      createdAt: now,
+      lastSeenAt: now,
+      expiresAt: new Date(Date.now() + sessionDuration * 1000).toISOString(),
+      revokedAt: null,
+      userAgent: req.get('user-agent') || '',
+      ipAddress: req.ip || 'local',
+    }
+    user.sessions ||= []
+    user.sessions.push(session)
+    await writeUsers(users)
+    res.cookie(sessionCookie, createToken(user, session.id), {
       httpOnly: true,
       sameSite: 'strict',
       secure: siteUrl.startsWith('https://'),
@@ -289,15 +354,115 @@ app.post('/api/auth/resend-verification', async (req, res, next) => {
   }
 })
 
+app.post('/api/auth/forgot-password', async (req, res, next) => {
+  try {
+    const email = String(req.body.email || '')
+      .trim()
+      .toLowerCase()
+    const users = await readUsers()
+    const user = users.find((item) => item.email === email)
+    let delivery = {}
+    if (user) {
+      const token = createVerificationToken()
+      user.passwordResetTokenHash = verificationHash(token)
+      user.passwordResetExpiresAt = new Date(Date.now() + passwordResetDuration * 1000).toISOString()
+      await writeUsers(users)
+      delivery = await sendPasswordResetEmail(user, token)
+    }
+    res.json({
+      message: '如果该邮箱已注册，我们已发送密码重置邮件。',
+      ...delivery,
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/auth/reset-password', async (req, res, next) => {
+  try {
+    const token = String(req.body.token || '')
+    const password = String(req.body.password || '')
+    if (password.length < 8) return res.status(400).json({ message: '密码至少需要 8 个字符。' })
+    const users = await readUsers()
+    const user = token ? users.find((entry) => entry.passwordResetTokenHash === verificationHash(token)) : null
+    const valid = Boolean(user && user.passwordResetExpiresAt && new Date(user.passwordResetExpiresAt).getTime() > Date.now())
+    if (!valid) return res.status(400).json({ message: '密码重置链接无效或已过期。' })
+    user.passwordHash = hashPassword(password)
+    user.passwordResetTokenHash = null
+    user.passwordResetExpiresAt = null
+    user.sessions = []
+    await writeUsers(users)
+    res.clearCookie(sessionCookie, {
+      httpOnly: true,
+      sameSite: 'strict',
+      secure: siteUrl.startsWith('https://'),
+    })
+    res.json({ message: '密码已更新，请使用新密码登录。' })
+  } catch (error) {
+    next(error)
+  }
+})
+
 app.get('/api/auth/me', requireAuth, (req, res) => res.json({ user: publicUser(req.user) }))
 
-app.post('/api/auth/logout', (_req, res) => {
-  res.clearCookie(sessionCookie, {
-    httpOnly: true,
-    sameSite: 'strict',
-    secure: siteUrl.startsWith('https://'),
-  })
-  res.json({ message: 'Signed out.' })
+app.post('/api/auth/logout', requireAuth, async (req, res, next) => {
+  try {
+    const users = await readUsers()
+    const user = users.find((item) => item.id === req.user.id)
+    const session = (user?.sessions || []).find((entry) => entry.id === req.session.id)
+    if (session) session.revokedAt = new Date().toISOString()
+    await writeUsers(users)
+    res.clearCookie(sessionCookie, {
+      httpOnly: true,
+      sameSite: 'strict',
+      secure: siteUrl.startsWith('https://'),
+    })
+    res.json({ message: 'Signed out.' })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/account/sessions', requireAuth, (req, res) => {
+  const sessions = (req.user.sessions || [])
+    .filter((session) => !session.revokedAt && new Date(session.expiresAt).getTime() > Date.now())
+    .sort((left, right) => new Date(right.lastSeenAt) - new Date(left.lastSeenAt))
+    .map((session) => publicLocalSession(session, req.session.id))
+  res.json({ sessions })
+})
+
+app.post('/api/account/sessions/revoke-others', requireAuth, async (req, res, next) => {
+  try {
+    const users = await readUsers()
+    const user = users.find((item) => item.id === req.user.id)
+    const now = new Date().toISOString()
+    for (const session of user.sessions || []) if (session.id !== req.session.id && !session.revokedAt) session.revokedAt = now
+    await writeUsers(users)
+    res.json({ message: 'Other sessions revoked.' })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete('/api/account/sessions/:sessionId', requireAuth, async (req, res, next) => {
+  try {
+    const users = await readUsers()
+    const user = users.find((item) => item.id === req.user.id)
+    const session = (user.sessions || []).find((entry) => entry.id === req.params.sessionId && !entry.revokedAt)
+    if (!session) return res.status(404).json({ message: 'Session not found.' })
+    session.revokedAt = new Date().toISOString()
+    await writeUsers(users)
+    const current = session.id === req.session.id
+    if (current)
+      res.clearCookie(sessionCookie, {
+        httpOnly: true,
+        sameSite: 'strict',
+        secure: siteUrl.startsWith('https://'),
+      })
+    res.json({ current })
+  } catch (error) {
+    next(error)
+  }
 })
 
 app.get('/api/admin/products', requireAuth, requireAdmin, async (_req, res, next) => {

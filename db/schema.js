@@ -17,11 +17,17 @@ export const users = pgTable(
       withTimezone: true,
       mode: 'string',
     }),
+    passwordResetTokenHash: text('password_reset_token_hash'),
+    passwordResetExpiresAt: timestamp('password_reset_expires_at', {
+      withTimezone: true,
+      mode: 'string',
+    }),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
   },
   (table) => [
     uniqueIndex('users_email_idx').on(table.email),
     uniqueIndex('users_verification_token_hash_idx').on(table.verificationTokenHash),
+    uniqueIndex('users_password_reset_token_hash_idx').on(table.passwordResetTokenHash),
     index('users_role_idx').on(table.role),
     check('users_role_check', sql`${table.role} IN ('customer', 'admin')`),
   ],

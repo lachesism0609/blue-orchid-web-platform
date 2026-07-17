@@ -18,7 +18,8 @@ The project is intended as a production-oriented learning platform and commerce 
 
 ### Customer experience
 
-- Email registration, one-time verification links, login, logout, and session revocation
+- Email registration, one-time verification links, login, logout, and one-hour password-reset links
+- Device Session management with current-device identification, individual revocation, and sign-out-other-devices controls
 - Authenticated favourites and cart data synchronized through PostgreSQL across refreshes and devices
 - Editable cart quantities and product-option changes through the product detail view
 - Profile editing and delivery-address management
@@ -155,7 +156,7 @@ blue-orchid-web-platform/
 
 ## Database and migrations
 
-PostgreSQL stores products, variants, sizes, SKUs, users, verification tokens, sessions, rate limits, favourites, cart items, addresses, orders, order items, and error-monitoring events. Foreign keys, uniqueness rules, indexes, and cascade behaviour are defined in `db/schema.js` and version-controlled under `drizzle/`.
+PostgreSQL stores products, variants, sizes, SKUs, users, email-verification and password-reset tokens, device sessions, rate limits, favourites, cart items, addresses, orders, order items, and error-monitoring events. Foreign keys, uniqueness rules, indexes, and cascade behaviour are defined in `db/schema.js` and version-controlled under `drizzle/`.
 
 After changing the schema:
 
@@ -188,8 +189,9 @@ Sign out and sign in again so `/api/auth/me` returns the updated `admin` role. E
 | Area | Representative endpoints |
 | --- | --- |
 | Catalogue | `GET /api/products`, `GET /api/products/:id`, `GET /api/exchange-rate` |
-| Authentication | `POST /api/auth/register`, `GET /api/auth/verify-email`, `POST /api/auth/resend-verification`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`, `POST /api/auth/revoke-sessions` |
+| Authentication | `POST /api/auth/register`, `GET /api/auth/verify-email`, `POST /api/auth/resend-verification`, `POST /api/auth/forgot-password`, `POST /api/auth/reset-password`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`, `POST /api/auth/revoke-sessions` |
 | Customer account | `/api/account/profile`, `/api/account/addresses`, `/api/account/orders` |
+| Device Sessions | `GET /api/account/sessions`, `DELETE /api/account/sessions/:id`, `POST /api/account/sessions/revoke-others` |
 | Shopping data | `/api/account/favourites`, `/api/account/cart` |
 | Administration | `/api/admin/products`, `/api/admin/variants/:id`, `/api/admin/skus/:id`, `/api/admin/orders` |
 | Monitoring | `POST /api/errors/report` |
@@ -206,6 +208,7 @@ Sign out and sign in again so `/api/auth/me` returns the updated `admin` role. E
 - Authentication and authenticated writes use database-backed rate limiting keyed by hashed client IP.
 - Passwords are salted and hashed; raw passwords and session tokens are never stored.
 - Email verification tokens are one-time hashes with a 24-hour expiry.
+- Password-reset tokens are stored only as one-time hashes, expire after one hour, and successful resets revoke every existing Session for the account.
 - Frontend and backend error reports truncate diagnostics and store hashed, not raw, client IP data.
 
 ## Testing and deployment

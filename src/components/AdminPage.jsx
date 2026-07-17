@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { orderStatusLabel } from "../store-utils.js";
 
 const tabs = {
@@ -283,7 +283,6 @@ export default function AdminPage({
   const [expandedOrder, setExpandedOrder] = useState(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
-  const pageRef = useRef(null);
   const filteredProducts = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return products.filter((product) =>
@@ -292,11 +291,6 @@ export default function AdminPage({
         .includes(needle),
     );
   }, [products, query]);
-  useEffect(() => {
-    if (editingId !== null) {
-      pageRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-    }
-  }, [editingId]);
   if (!open || user?.role !== "admin") return null;
   const editingProduct = products.find((product) => product.id === editingId);
   const lowStock = products.filter((product) => product.stock < 10).length;
@@ -316,7 +310,7 @@ export default function AdminPage({
   };
 
   return (
-    <div className="admin-page" ref={pageRef}>
+    <div className="admin-page">
       <div className="admin-shell">
         <aside className="admin-sidebar">
           <p>BLUE ORCHID</p>

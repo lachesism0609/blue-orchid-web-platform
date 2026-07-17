@@ -6,6 +6,7 @@ import { createAdminProduct, isAdmin, normalizeOrderStatus, orderStatuses, valid
 const textEncoder = new TextEncoder()
 const sessionDuration = 60 * 60 * 24 * 7
 const verificationDuration = 60 * 60 * 24
+const passwordResetDuration = 60 * 60
 const passwordIterations = 100000
 const sessionCookie = '__Host-blue_orchid_session'
 
@@ -207,6 +208,33 @@ async function issueVerification(user, request, env) {
   return {}
 }
 
+async function issuePasswordReset(user, request, env) {
+  const token = bytesToBase64url(crypto.getRandomValues(new Uint8Array(32)))
+  const tokenHash = await sha256(token)
+  const expiresAt = new Date(Date.now() + passwordResetDuration * 1000).toISOString()
+  await env.DB.prepare('UPDATE users SET password_reset_token_hash = ?, password_reset_expires_at = ? WHERE id = ?').bind(tokenHash, expiresAt, user.id).run()
+  const resetUrl = `${siteUrl(request, env)}/?resetToken=${encodeURIComponent(token)}`
+  if (!env.RESEND_API_KEY || !env.EMAIL_FROM) {
+    if (env.DEV_EMAIL_VERIFICATION === 'true') return { resetUrl }
+    throw new Error('Email delivery is not configured')
+  }
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: env.EMAIL_FROM,
+      to: [user.email],
+      subject: 'Reset your Blue Orchid password',
+      html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;padding:32px;color:#202020"><h1 style="color:#294887">Blue Orchid</h1><p>Hello ${escapeHtml(user.name)},</p><p>Use the button below to choose a new password.</p><p><a href="${resetUrl}" style="display:inline-block;padding:12px 22px;background:#294887;color:white;text-decoration:none">Reset password</a></p><p>This link expires in one hour and can only be used once. If you did not request this change, you can ignore this email.</p></div>`,
+    }),
+  })
+  if (!response.ok) throw new Error(`Email delivery failed (${response.status})`)
+  return {}
+}
+
 function verificationPage(success, origin) {
   const title = success ? 'Email verified' : 'Verification link invalid'
   const message = success ? 'Your email has been verified. You can now sign in.' : 'This verification link is invalid or has expired. Please request a new one.'
@@ -243,6 +271,33 @@ function publicAddress(address) {
     postcode: address.postcode,
     country: address.country,
     createdAt: address.created_at,
+  }
+}
+
+function sessionDevice(userAgent) {
+  const agent = String(userAgent || '')
+  const browser = /Edg\//.test(agent) ? 'Edge' : /Firefox\//.test(agent) ? 'Firefox' : /Chrome\//.test(agent) ? 'Chrome' : /Safari\//.test(agent) ? 'Safari' : 'Browser'
+  const platform = /Windows/i.test(agent) ? 'Windows' : /Android/i.test(agent) ? 'Android' : /iPhone|iPad/i.test(agent) ? 'iOS' : /Mac OS/i.test(agent) ? 'macOS' : /Linux/i.test(agent) ? 'Linux' : 'Unknown device'
+  return `${browser} · ${platform}`
+}
+
+function maskedIp(value) {
+  const ip = String(value || '')
+  if (ip.includes('.')) return ip.replace(/\.\d+$/, '.xxx')
+  if (ip.includes(':')) return `${ip.split(':').slice(0, 3).join(':')}:…`
+  return ip || 'unknown'
+}
+
+function publicSession(session, currentTokenHash) {
+  return {
+    id: session.id,
+    device: sessionDevice(session.user_agent),
+    userAgent: session.user_agent,
+    ipAddress: maskedIp(session.ip_address),
+    createdAt: session.created_at,
+    lastSeenAt: session.last_seen_at,
+    expiresAt: session.expires_at,
+    current: session.token_hash === currentTokenHash,
   }
 }
 
@@ -459,6 +514,42 @@ export async function onRequest({ request, env, params }) {
       })
     }
 
+    if (method === 'POST' && route === 'auth/forgot-password') {
+      const body = await requestBody(request)
+      const email = String(body.email || '')
+        .trim()
+        .toLowerCase()
+      const user = /^\S+@\S+\.\S+$/.test(email) ? await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first() : null
+      const delivery = user ? await issuePasswordReset(user, request, env) : {}
+      return json({
+        message: '如果该邮箱已注册，我们已发送密码重置邮件。',
+        ...delivery,
+      })
+    }
+
+    if (method === 'POST' && route === 'auth/reset-password') {
+      const body = await requestBody(request)
+      const token = String(body.token || '')
+      const password = String(body.password || '')
+      if (password.length < 8) return json({ message: '密码至少需要 8 个字符。' }, 400)
+      const user = token
+        ? await env.DB.prepare('SELECT * FROM users WHERE password_reset_token_hash = ?')
+            .bind(await sha256(token))
+            .first()
+        : null
+      const valid = Boolean(user && user.password_reset_expires_at && timestampMilliseconds(user.password_reset_expires_at) > Date.now())
+      if (!valid) return json({ message: '密码重置链接无效或已过期。' }, 400)
+      const passwordData = await passwordHash(password)
+      const now = new Date().toISOString()
+      await env.DB.batch([
+        env.DB.prepare('UPDATE users SET password_hash = ?, password_salt = ?, password_reset_token_hash = NULL, password_reset_expires_at = NULL WHERE id = ?').bind(passwordData.hash, passwordData.salt, user.id),
+        env.DB.prepare('UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL').bind(now, user.id),
+      ])
+      return json({ message: '密码已更新，请使用新密码登录。' }, 200, {
+        'Set-Cookie': sessionCookieHeader('', 0),
+      })
+    }
+
     if (method === 'POST' && route === 'auth/login') {
       const body = await requestBody(request)
       const email = String(body.email || '')
@@ -495,6 +586,31 @@ export async function onRequest({ request, env, params }) {
       return json({ message: 'All sessions revoked.' }, 200, {
         'Set-Cookie': sessionCookieHeader('', 0),
       })
+    }
+
+    if (method === 'GET' && route === 'account/sessions') {
+      const currentTokenHash = await sha256(sessionToken(request))
+      const { results } = await env.DB.prepare('SELECT * FROM sessions WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ? ORDER BY last_seen_at DESC').bind(user.id, new Date().toISOString()).all()
+      return json({
+        sessions: results.map((session) => publicSession(session, currentTokenHash)),
+      })
+    }
+
+    if (method === 'POST' && route === 'account/sessions/revoke-others') {
+      const currentTokenHash = await sha256(sessionToken(request))
+      await env.DB.prepare('UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND token_hash <> ? AND revoked_at IS NULL').bind(new Date().toISOString(), user.id, currentTokenHash).run()
+      return json({ message: 'Other sessions revoked.' })
+    }
+
+    const sessionMatch = route.match(/^account\/sessions\/([^/]+)$/)
+    if (method === 'DELETE' && sessionMatch) {
+      const currentTokenHash = await sha256(sessionToken(request))
+      const sessionId = decodeURIComponent(sessionMatch[1])
+      const target = await env.DB.prepare('SELECT * FROM sessions WHERE id = ? AND user_id = ? AND revoked_at IS NULL').bind(sessionId, user.id).first()
+      if (!target) return json({ message: 'Session not found.' }, 404)
+      await env.DB.prepare('UPDATE sessions SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL').bind(new Date().toISOString(), sessionId, user.id).run()
+      const current = target.token_hash === currentTokenHash
+      return json({ current }, 200, current ? { 'Set-Cookie': sessionCookieHeader('', 0) } : {})
     }
 
     if (route.startsWith('admin/')) {

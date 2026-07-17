@@ -145,6 +145,8 @@ export default function App() {
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState("");
   const [developmentVerificationUrl, setDevelopmentVerificationUrl] =
     useState("");
+  const [developmentResetUrl, setDevelopmentResetUrl] = useState("");
+  const [resetToken, setResetToken] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
   const [authUser, setAuthUser] = useState(null);
   const [authResolved, setAuthResolved] = useState(false);
@@ -152,7 +154,11 @@ export default function App() {
     () => window.location.hash === "#account",
   );
   const [accountTab, setAccountTab] = useState("orders");
-  const [accountData, setAccountData] = useState({ orders: [], addresses: [] });
+  const [accountData, setAccountData] = useState({
+    orders: [],
+    addresses: [],
+    sessions: [],
+  });
   const [accountNotice, setAccountNotice] = useState("");
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [adminPage, setAdminPage] = useState(
@@ -297,19 +303,25 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [toast]);
   useEffect(() => {
-    const status = new URLSearchParams(window.location.search).get(
-      "emailVerified",
-    );
-    if (!status) return;
-    setToast(
-      status === "1"
-        ? lang === "zh"
-          ? "邮箱验证成功，现在可以登录。"
-          : "Email verified. You can now sign in."
-        : lang === "zh"
-          ? "验证链接无效或已过期。"
-          : "The verification link is invalid or expired.",
-    );
+    const parameters = new URLSearchParams(window.location.search);
+    const status = parameters.get("emailVerified");
+    const passwordToken = parameters.get("resetToken");
+    if (status)
+      setToast(
+        status === "1"
+          ? lang === "zh"
+            ? "邮箱验证成功，现在可以登录。"
+            : "Email verified. You can now sign in."
+          : lang === "zh"
+            ? "验证链接无效或已过期。"
+            : "The verification link is invalid or expired.",
+      );
+    if (passwordToken) {
+      setResetToken(passwordToken);
+      setAuthMode("reset-password");
+      setAuthOpen(true);
+    }
+    if (!status && !passwordToken) return;
     window.history.replaceState(
       null,
       "",
@@ -399,11 +411,16 @@ export default function App() {
   }, [authUser?.id]);
   const loadAccount = async () => {
     try {
-      const [orders, addresses] = await Promise.all([
+      const [orders, addresses, sessions] = await Promise.all([
         accountRequest("/api/account/orders"),
         accountRequest("/api/account/addresses"),
+        accountRequest("/api/account/sessions"),
       ]);
-      setAccountData({ orders: orders.orders, addresses: addresses.addresses });
+      setAccountData({
+        orders: orders.orders,
+        addresses: addresses.addresses,
+        sessions: sessions.sessions,
+      });
     } catch (error) {
       setAccountNotice(error.message);
     }
@@ -498,11 +515,27 @@ export default function App() {
     setAuthNotice("");
     setAuthLoading(true);
     const form = new FormData(event.currentTarget);
-    const body = {
-      email: form.get("email"),
-      password: form.get("password"),
-      ...(authMode === "register" ? { name: form.get("name") } : {}),
-    };
+    const password = form.get("password");
+    if (
+      authMode === "reset-password" &&
+      password !== form.get("confirmPassword")
+    ) {
+      setAuthError(
+        lang === "zh" ? "两次输入的密码不一致。" : "Passwords do not match.",
+      );
+      setAuthLoading(false);
+      return;
+    }
+    const body =
+      authMode === "forgot-password"
+        ? { email: form.get("email") }
+        : authMode === "reset-password"
+          ? { token: resetToken, password }
+          : {
+              email: form.get("email"),
+              password,
+              ...(authMode === "register" ? { name: form.get("name") } : {}),
+            };
     try {
       const response = await fetch(`/api/auth/${authMode}`, {
         method: "POST",
@@ -521,6 +554,26 @@ export default function App() {
             : "The authentication service is unavailable. Please restart the development server.",
         );
       if (!response.ok) throw new Error(data.message || "Request failed");
+      if (authMode === "forgot-password") {
+        setDevelopmentResetUrl(data.resetUrl || "");
+        setAuthNotice(
+          lang === "zh"
+            ? "如果该邮箱已注册，密码重置邮件已经发送。"
+            : "If that account exists, a password reset email has been sent.",
+        );
+        return;
+      }
+      if (authMode === "reset-password") {
+        setResetToken("");
+        setDevelopmentResetUrl("");
+        setAuthMode("login");
+        setAuthNotice(
+          lang === "zh"
+            ? "密码已更新，所有旧设备均已退出。请重新登录。"
+            : "Password updated and all previous devices signed out. Please sign in.",
+        );
+        return;
+      }
       if (authMode === "register" && data.requiresVerification) {
         setPendingVerificationEmail(body.email);
         setDevelopmentVerificationUrl(data.verificationUrl || "");
@@ -935,6 +988,44 @@ export default function App() {
       setAccountNotice(error.message);
     }
   };
+  const revokeSession = async (id, current) => {
+    try {
+      await accountRequest(`/api/account/sessions/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+      if (current) {
+        setAuthUser(null);
+        setAccountPage(false);
+        setAccountData({ orders: [], addresses: [], sessions: [] });
+        window.history.replaceState(null, "", window.location.pathname);
+        setToast(
+          lang === "zh"
+            ? "此设备已退出登录。"
+            : "This device has been signed out.",
+        );
+        return;
+      }
+      await loadAccount();
+      setAccountNotice(
+        lang === "zh" ? "设备 Session 已撤销。" : "Device session revoked.",
+      );
+    } catch (error) {
+      setAccountNotice(error.message);
+    }
+  };
+  const revokeOtherSessions = async () => {
+    try {
+      await accountRequest("/api/account/sessions/revoke-others", {
+        method: "POST",
+      });
+      await loadAccount();
+      setAccountNotice(
+        lang === "zh" ? "其他设备已全部退出。" : "Other devices signed out.",
+      );
+    } catch (error) {
+      setAccountNotice(error.message);
+    }
+  };
   return (
     <>
       <StoreHeader
@@ -1161,6 +1252,8 @@ export default function App() {
         onDeleteAddress={deleteAddress}
         onAddAddress={addAddress}
         onSaveProfile={saveProfile}
+        onRevokeSession={revokeSession}
+        onRevokeOtherSessions={revokeOtherSessions}
       />
       <OrderDetail
         order={selectedOrder}
@@ -1179,9 +1272,16 @@ export default function App() {
         notice={authNotice}
         email={pendingVerificationEmail}
         verificationUrl={developmentVerificationUrl}
+        resetUrl={developmentResetUrl}
         onClose={() => setAuthOpen(false)}
         onSubmit={submitAuth}
         onResend={resendVerification}
+        onForgot={() => {
+          setAuthMode("forgot-password");
+          setAuthError("");
+          setAuthNotice("");
+          setDevelopmentResetUrl("");
+        }}
         onSwitch={() => {
           setAuthMode((current) =>
             current === "login" ? "register" : "login",
@@ -1189,6 +1289,7 @@ export default function App() {
           setAuthError("");
           setAuthNotice("");
           setDevelopmentVerificationUrl("");
+          setDevelopmentResetUrl("");
         }}
       />
     </>
