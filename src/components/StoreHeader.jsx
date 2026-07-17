@@ -146,13 +146,17 @@ export default function StoreHeader({
               <ToolIcon name="user" />
             )}
           </button>
-          <button onClick={onFavourites}>
-            <ToolIcon name="heart" />
-          </button>
-          <button className="bag" onClick={onCart}>
-            <ToolIcon name="bag" />
-            {cartCount > 0 && <b>{cartCount}</b>}
-          </button>
+          {user && (
+            <>
+              <button onClick={onFavourites}>
+                <ToolIcon name="heart" />
+              </button>
+              <button className="bag" onClick={onCart}>
+                <ToolIcon name="bag" />
+                {cartCount > 0 && <b>{cartCount}</b>}
+              </button>
+            </>
+          )}
         </div>
       </header>
     </>

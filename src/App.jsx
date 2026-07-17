@@ -147,6 +147,7 @@ export default function App() {
     useState("");
   const [authLoading, setAuthLoading] = useState(false);
   const [authUser, setAuthUser] = useState(null);
+  const [authResolved, setAuthResolved] = useState(false);
   const [accountPage, setAccountPage] = useState(
     () => window.location.hash === "#account",
   );
@@ -359,8 +360,23 @@ export default function App() {
   useEffect(() => {
     accountRequest("/api/auth/me")
       .then((data) => setAuthUser(data.user))
-      .catch(() => setAuthUser(null));
+      .catch(() => setAuthUser(null))
+      .finally(() => setAuthResolved(true));
   }, []);
+  useEffect(() => {
+    if (!authResolved || authUser || (!cartPage && !favouritesPage)) return;
+    setCartPage(false);
+    setFavouritesPage(false);
+    setCheckoutStage("cart");
+    setCompletedOrder(null);
+    if (["#cart", "#favourites"].includes(window.location.hash)) {
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${window.location.search}`,
+      );
+    }
+  }, [authResolved, authUser, cartPage, favouritesPage]);
   useEffect(() => {
     if (!authUser) {
       setLiked([]);
@@ -950,6 +966,7 @@ export default function App() {
         onAccount={authUser ? openAccount : openAuth}
         onFavourites={openFavourites}
         onCart={() => {
+          if (!authUser) return;
           setCartPage(true);
           setCatalogPage("");
           setFavouritesPage(false);
@@ -1029,7 +1046,7 @@ export default function App() {
         onAction={() => addToCart(selectedProduct)}
       />
       <CartPage
-        open={cartPage}
+        open={Boolean(authUser && cartPage)}
         stage={checkoutStage}
         completedOrder={completedOrder}
         lang={lang}
@@ -1055,7 +1072,7 @@ export default function App() {
         onHome={goHome}
       />
       <FavouritesPage
-        open={favouritesPage}
+        open={Boolean(authUser && favouritesPage)}
         products={favouriteProducts}
         lang={lang}
         productNames={productNames}

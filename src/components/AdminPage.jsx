@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { orderStatusLabel } from "../store-utils.js";
 
 const tabs = {
@@ -171,26 +171,9 @@ function ProductFields({ product, zh }) {
   );
 }
 
-function ProductEditor({
-  product,
-  zh,
-  busy,
-  onBack,
-  onSave,
-  onVariant,
-  onSku,
-}) {
+function ProductEditor({ product, zh, busy, onSave, onVariant, onSku }) {
   return (
     <section className="admin-editor">
-      <button
-        type="button"
-        className="admin-editor-back"
-        onClick={onBack}
-        aria-label={zh ? "返回商品列表" : "Back to product list"}
-      >
-        <span aria-hidden="true">←</span>
-        {zh ? "返回商品列表" : "Back to products"}
-      </button>
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -300,6 +283,7 @@ export default function AdminPage({
   const [expandedOrder, setExpandedOrder] = useState(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  const pageRef = useRef(null);
   const filteredProducts = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return products.filter((product) =>
@@ -308,6 +292,11 @@ export default function AdminPage({
         .includes(needle),
     );
   }, [products, query]);
+  useEffect(() => {
+    if (editingId !== null) {
+      pageRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }, [editingId]);
   if (!open || user?.role !== "admin") return null;
   const editingProduct = products.find((product) => product.id === editingId);
   const lowStock = products.filter((product) => product.stock < 10).length;
@@ -327,7 +316,7 @@ export default function AdminPage({
   };
 
   return (
-    <div className="admin-page">
+    <div className="admin-page" ref={pageRef}>
       <div className="admin-shell">
         <aside className="admin-sidebar">
           <p>BLUE ORCHID</p>
@@ -359,15 +348,27 @@ export default function AdminPage({
               <p className="auth-kicker">CONTROL CENTRE</p>
               <h1>{tabs[tab][zh ? 0 : 1]}</h1>
             </div>
-            <button onClick={onReload} disabled={loading}>
-              {loading
-                ? zh
-                  ? "加载中…"
-                  : "Loading…"
-                : zh
-                  ? "刷新数据"
-                  : "Refresh"}
-            </button>
+            <div className="admin-top-actions">
+              {editingProduct && (
+                <button
+                  type="button"
+                  className="admin-list-back"
+                  onClick={() => setEditingId(null)}
+                >
+                  <span aria-hidden="true">←</span>
+                  {zh ? "返回商品列表" : "Back to products"}
+                </button>
+              )}
+              <button onClick={onReload} disabled={loading}>
+                {loading
+                  ? zh
+                    ? "加载中…"
+                    : "Loading…"
+                  : zh
+                    ? "刷新数据"
+                    : "Refresh"}
+              </button>
+            </div>
           </div>
           {notice && <p className="admin-notice">{notice}</p>}
           <div className="admin-metrics">
@@ -424,7 +425,6 @@ export default function AdminPage({
                   product={editingProduct}
                   zh={zh}
                   busy={busy}
-                  onBack={() => setEditingId(null)}
                   onSave={(payload) =>
                     run(
                       () => onUpdateProduct(editingProduct.id, payload),
