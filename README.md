@@ -215,7 +215,7 @@ Sign out and sign in again so `/api/auth/me` returns the updated `admin` role. E
 
 ## Testing and deployment
 
-The `Test and deploy` GitHub Actions workflow runs on pull requests and pushes to `codex/complete-blue-orchid-store`. Its verification job performs:
+The `Test and deploy` GitHub Actions workflow runs on pull requests and pushes to `main` and `codex/complete-blue-orchid-store`. Its verification job performs:
 
 1. Dependency installation
 2. Frontend and backend tests

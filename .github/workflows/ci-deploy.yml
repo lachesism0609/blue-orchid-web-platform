@@ -3,7 +3,7 @@ name: Test and deploy
 on:
   pull_request:
   push:
-    branches: [codex/complete-blue-orchid-store]
+    branches: [main, codex/complete-blue-orchid-store]
   workflow_dispatch:
 
 concurrency:
@@ -33,7 +33,7 @@ jobs:
           if-no-files-found: error
 
   deploy:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/codex/complete-blue-orchid-store'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/codex/complete-blue-orchid-store')
     needs: verify
     runs-on: ubuntu-latest
     environment: production
@@ -65,7 +65,7 @@ jobs:
         run: npm run db:migrate && npm run db:seed
       - name: Deploy Cloudflare Pages
         if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != '' && env.DATABASE_URL != ''
-        run: npx --yes wrangler@4 pages deploy dist --project-name blue-orchid-web-platform --branch codex/complete-blue-orchid-store --commit-hash ${{ github.sha }}
+        run: npx --yes wrangler@4 pages deploy dist --project-name blue-orchid-web-platform --branch ${{ github.ref_name }} --commit-hash ${{ github.sha }}
       - name: Cloudflare credentials not configured
         if: env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == ''
         run: echo "Verification passed; add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets to enable workflow deployment."

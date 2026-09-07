@@ -213,7 +213,7 @@ npm run db:promote-admin
 
 ## 测试与部署
 
-`Test and deploy` GitHub Actions 工作流在拉取请求和推送到 `codex/complete-blue-orchid-store` 分支时触发。校验任务包括：
+`Test and deploy` GitHub Actions 工作流在拉取请求，以及推送到 `main` 和 `codex/complete-blue-orchid-store` 分支时触发。校验任务包括：
 
 1. 安装依赖
 2. 前端与后端测试
