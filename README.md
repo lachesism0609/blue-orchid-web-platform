@@ -1,5 +1,7 @@
 # Blue Orchid Web Platform
 
+[中文文档](README.zh-CN.md)
+
 Blue Orchid is a bilingual, full-stack fashion commerce demonstration built with React, Node.js, Cloudflare Pages Functions, and managed PostgreSQL. It includes a responsive storefront, authenticated customer journeys, inventory-aware checkout, and a role-protected product and order administration workspace.
 
 The project is intended as a production-oriented learning platform and commerce prototype. Checkout creates real database orders and deducts inventory, but no payment provider is connected.
@@ -130,28 +132,28 @@ Never commit real secrets or database URLs. Store production values in the GitHu
 
 ```text
 blue-orchid-web-platform/
-├─ src/
-│  ├─ components/             # Store, account, checkout, product, and admin views
-│  ├─ App.jsx                 # Application state, API integration, and navigation
-│  ├─ main.jsx                # React entry point
-│  ├─ store-utils.js          # Catalogue, pagination, and cart helpers
-│  └─ styles.css              # Responsive application styles
-├─ functions/
-│  ├─ api/[[path]].js         # Cloudflare Pages API router
-│  └─ _lib/                   # Database, catalogue, customer, and admin helpers
-├─ server/
-│  ├─ index.js                # Express development API
-│  ├─ dev.js                  # Combined local launcher
-│  └─ data/                   # Development-only JSON fallback data
-├─ db/
-│  ├─ schema.js               # Managed PostgreSQL schema
-│  ├─ migrate.js              # Migration runner
-│  ├─ seed.js                 # Non-destructive catalogue seeding
-│  └─ promote-admin.js        # Administrator provisioning
-├─ drizzle/                   # Version-controlled PostgreSQL migrations
-├─ tests/                     # Frontend utility and backend integration tests
-├─ public/_routes.json        # Cloudflare Pages Function routing
-└─ .github/workflows/         # Verification and deployment pipeline
+├── src/
+│   ├── components/             # Store, account, checkout, product, and admin views
+│   ├── App.jsx                 # Application state, API integration, and navigation
+│   ├── main.jsx                # React entry point
+│   ├── store-utils.js          # Catalogue, pagination, and cart helpers
+│   └── styles.css              # Responsive application styles
+├── functions/
+│   ├── api/[[path]].js         # Cloudflare Pages API router
+│   └── _lib/                   # Database, catalogue, customer, and admin helpers
+├── server/
+│   ├── index.js                # Express development API
+│   ├── dev.js                  # Combined local launcher
+│   └── data/                   # Development-only JSON fallback data
+├── db/
+│   ├── schema.js               # Managed PostgreSQL schema
+│   ├── migrate.js              # Migration runner
+│   ├── seed.js                 # Non-destructive catalogue seeding
+│   └── promote-admin.js        # Administrator provisioning
+├── drizzle/                    # Version-controlled PostgreSQL migrations
+├── tests/                      # Frontend utility and backend integration tests
+├── public/_routes.json         # Cloudflare Pages Function routing
+└── .github/workflows/          # Verification and deployment pipeline
 ```
 
 ## Database and migrations
